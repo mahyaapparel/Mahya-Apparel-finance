@@ -1,0 +1,6 @@
+{
+  "name": "Mahya Apparel Finance",
+  "description": "Aplikasi pencatatan keuangan sederhana untuk divisi Konveksi, Sablon, dan Aksesori dengan ringkasan real-time dan tabel rincian transaksi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

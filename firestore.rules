@@ -1,0 +1,24 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default-deny catch-all rule for security
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Allow read, write access to transactions for both Google Auth and local login synchronization
+    match /transactions/{transactionId} {
+      allow read, write: if true;
+    }
+
+    // Allow read, write access to approval requests for both Google Auth and local login synchronization
+    match /approval_requests/{requestId} {
+      allow read, write: if true;
+    }
+
+    // Allow read, write access to users
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+  }
+}

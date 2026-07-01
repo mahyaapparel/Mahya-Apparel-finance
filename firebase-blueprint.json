@@ -1,0 +1,72 @@
+{
+  "entities": {
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Financial transaction record for a specific division",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier" },
+        "date": { "type": "string", "description": "Transaction date in YYYY-MM-DD" },
+        "division": { "type": "string", "enum": ["Konveksi", "Sablon", "Aksesori", "Alat"] },
+        "type": { "type": "string", "enum": ["Pemasukan", "Pengeluaran"] },
+        "amount": { "type": "number" },
+        "description": { "type": "string" }
+      },
+      "required": ["id", "date", "division", "type", "amount", "description"]
+    },
+    "ApprovalRequest": {
+      "title": "ApprovalRequest",
+      "description": "Request for edit or delete of transaction that needs Owner approval",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "requestType": { "type": "string", "enum": ["Edit", "Hapus"] },
+        "transactionId": { "type": "string" },
+        "transactionDesc": { "type": "string" },
+        "transactionAmount": { "type": "number" },
+        "transactionDivision": { "type": "string" },
+        "requestedBy": { "type": "string" },
+        "requestedAt": { "type": "string" },
+        "status": { "type": "string", "enum": ["Pending", "Disetujui", "Ditolak"] },
+        "newData": {
+          "type": "object",
+          "properties": {
+            "date": { "type": "string" },
+            "division": { "type": "string" },
+            "type": { "type": "string" },
+            "amount": { "type": "number" },
+            "description": { "type": "string" }
+          }
+        }
+      },
+      "required": ["id", "requestType", "transactionId", "transactionDesc", "transactionAmount", "transactionDivision", "requestedBy", "requestedAt", "status"]
+    },
+    "AppUser": {
+      "title": "AppUser",
+      "description": "App user document for tracking login sessions and configuring role access (Owner / Admin)",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "picture": { "type": "string" },
+        "role": { "type": "string", "enum": ["Owner", "Admin"] },
+        "lastLoginAt": { "type": "string" }
+      },
+      "required": ["email", "name", "role", "lastLoginAt"]
+    }
+  },
+  "firestore": {
+    "/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Financial ledger transactions collection"
+    },
+    "/approval_requests/{requestId}": {
+      "schema": "ApprovalRequest",
+      "description": "Approval requests for editing or deleting transactions"
+    },
+    "/users/{userId}": {
+      "schema": "AppUser",
+      "description": "Users tracking list with roles"
+    }
+  }
+}
