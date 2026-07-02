@@ -46,7 +46,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Transaction, Division, TransactionType, ApprovalRequest, AppUser } from './types';
 import { auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged, signInAnonymously, OperationType, handleFirestoreError } from './firebase';
 import { collection, doc, setDoc, deleteDoc, onSnapshot, getDoc } from 'firebase/firestore';
-import * as XLSX from 'xlsx';
+import * as XLSX from 'xlsx-js-style';
 
 // Data Sampel Awal
 const initialSampleTransactions: Transaction[] = [
@@ -1332,74 +1332,323 @@ export default function App() {
 
   // 1. Ekspor ke Excel asli (.xlsx) menggunakan SheetJS
   const exportToExcelXLSX = () => {
-    const data = transactions.map((tx, idx) => {
-      let kIn = 0, kOut = 0, kProf = 0;
-      let sIn = 0, sOut = 0, sProf = 0;
-      let aIn = 0, aOut = 0, aProf = 0;
-      let eqVal = 0;
+    // We group by date just like the live table
+    const uniqueDates = Array.from(new Set(filteredTransactions.map(t => t.date as string)))
+      .sort((a, b) => (b as string).localeCompare(a as string)) as string[]; // Newest first
 
-      let kDesc = '';
-      let sDesc = '';
-      let aDesc = '';
-      let eqDesc = '';
+    if (uniqueDates.length === 0) {
+      triggerToast('Tidak ada data transaksi ditemukan untuk diekspor.');
+      return;
+    }
 
-      if (tx.division === 'Konveksi') {
-        kDesc = tx.description;
-        if (tx.type === 'Pemasukan') { kIn = tx.amount; kProf = tx.amount; }
-        else { kOut = tx.amount; kProf = -tx.amount; }
-      } else if (tx.division === 'Sablon') {
-        sDesc = tx.description;
-        if (tx.type === 'Pemasukan') { sIn = tx.amount; sProf = tx.amount; }
-        else { sOut = tx.amount; sProf = -tx.amount; }
-      } else if (tx.division === 'Aksesori') {
-        aDesc = tx.description;
-        if (tx.type === 'Pemasukan') { aIn = tx.amount; aProf = tx.amount; }
-        else { aOut = tx.amount; aProf = -tx.amount; }
-      } else if (tx.division === 'Alat') {
-        eqDesc = tx.description;
-        eqVal = tx.amount;
+    const aoa: any[][] = [];
+
+    // Row 0: Category Headers
+    aoa.push([
+      'Tanggal',              // Col 0
+      'Konveksi', '', '', '', // Col 1-4
+      'Sablon', '', '', '',   // Col 5-8
+      'Aksesori', '', '', '', // Col 9-12
+      'Alat', ''              // Col 13-14
+    ]);
+
+    // Row 1: Sub-headers
+    aoa.push([
+      '',                     // Col 0 (merged with Row 0)
+      'Keterangan', 'Masuk', 'Keluar', 'Laba', // Konveksi
+      'Keterangan', 'Masuk', 'Keluar', 'Laba', // Sablon
+      'Keterangan', 'Masuk', 'Keluar', 'Laba', // Aksesori
+      'Keterangan', 'Transaksi'                // Alat
+    ]);
+
+    const merges: any[] = [];
+    
+    // Header merges:
+    // 1. Tanggal (Merge Row 0, Col 0 with Row 1, Col 0)
+    merges.push({ s: { r: 0, c: 0 }, e: { r: 1, c: 0 } });
+    // 2. Konveksi (Merge Row 0, Col 1 to Row 0, Col 4)
+    merges.push({ s: { r: 0, c: 1 }, e: { r: 0, c: 4 } });
+    // 3. Sablon (Merge Row 0, Col 5 to Row 0, Col 8)
+    merges.push({ s: { r: 0, c: 5 }, e: { r: 0, c: 8 } });
+    // 4. Aksesori (Merge Row 0, Col 9 to Row 0, Col 12)
+    merges.push({ s: { r: 0, c: 9 }, e: { r: 0, c: 12 } });
+    // 5. Alat (Merge Row 0, Col 13 to Row 0, Col 14)
+    merges.push({ s: { r: 0, c: 13 }, e: { r: 0, c: 14 } });
+
+    let currentRowIndex = 2;
+
+    uniqueDates.forEach((date) => {
+      const dateKonveksi = filteredTransactions.filter(t => t.date === date && t.division === 'Konveksi');
+      const dateSablon = filteredTransactions.filter(t => t.date === date && t.division === 'Sablon');
+      const dateAksesori = filteredTransactions.filter(t => t.date === date && t.division === 'Aksesori');
+      const dateAlat = filteredTransactions.filter(t => t.date === date && t.division === 'Alat');
+
+      const dateMaxRows = Math.max(
+        dateKonveksi.length,
+        dateSablon.length,
+        dateAksesori.length,
+        dateAlat.length
+      );
+
+      if (dateMaxRows === 0) return;
+
+      // Date Merge: Merge Col 0 from currentRowIndex to (currentRowIndex + dateMaxRows - 1)
+      if (dateMaxRows > 1) {
+        merges.push({
+          s: { r: currentRowIndex, c: 0 },
+          e: { r: currentRowIndex + dateMaxRows - 1, c: 0 }
+        });
       }
 
-      return {
-        'No': idx + 1,
-        'Tanggal': tx.date,
-        'Keterangan Konveksi': kDesc || '',
-        'Pemasukan Konveksi': kIn || null,
-        'Pengeluaran Konveksi': kOut || null,
-        'Laba Konveksi': kProf || null,
-        'Keterangan Sablon': sDesc || '',
-        'Pemasukan Sablon': sIn || null,
-        'Pengeluaran Sablon': sOut || null,
-        'Laba Sablon': sProf || null,
-        'Keterangan Aksesori': aDesc || '',
-        'Pemasukan Aksesori': aIn || null,
-        'Pengeluaran Aksesori': aOut || null,
-        'Laba Aksesori': aProf || null,
-        'Keterangan Alat': eqDesc || '',
-        'Transaksi Alat': eqVal || null
-      };
+      for (let j = 0; j < dateMaxRows; j++) {
+        const txK = dateKonveksi[j];
+        const txS = dateSablon[j];
+        const txA = dateAksesori[j];
+        const txE = dateAlat[j];
+
+        const row: any[] = [];
+        
+        // Col 0: Tanggal (only on the first row of this date group)
+        row[0] = j === 0 ? date : '';
+
+        // Konveksi
+        if (txK) {
+          row[1] = txK.description;
+          row[2] = txK.type === 'Pemasukan' ? txK.amount : 0;
+          row[3] = txK.type === 'Pengeluaran' ? txK.amount : 0;
+          row[4] = txK.type === 'Pemasukan' ? txK.amount : -txK.amount;
+        } else {
+          row[1] = '';
+          row[2] = '';
+          row[3] = '';
+          row[4] = '';
+        }
+
+        // Sablon
+        if (txS) {
+          row[5] = txS.description;
+          row[6] = txS.type === 'Pemasukan' ? txS.amount : 0;
+          row[7] = txS.type === 'Pengeluaran' ? txS.amount : 0;
+          row[8] = txS.type === 'Pemasukan' ? txS.amount : -txS.amount;
+        } else {
+          row[5] = '';
+          row[6] = '';
+          row[7] = '';
+          row[8] = '';
+        }
+
+        // Aksesori
+        if (txA) {
+          row[9] = txA.description;
+          row[10] = txA.type === 'Pemasukan' ? txA.amount : 0;
+          row[11] = txA.type === 'Pengeluaran' ? txA.amount : 0;
+          row[12] = txA.type === 'Pemasukan' ? txA.amount : -txA.amount;
+        } else {
+          row[9] = '';
+          row[10] = '';
+          row[11] = '';
+          row[12] = '';
+        }
+
+        // Alat
+        if (txE) {
+          row[13] = txE.description;
+          row[14] = txE.amount;
+        } else {
+          row[13] = '';
+          row[14] = '';
+        }
+
+        aoa.push(row);
+      }
+
+      currentRowIndex += dateMaxRows;
     });
 
-    const ws = XLSX.utils.json_to_sheet(data);
+    // Calculate totals for the footer
+    const exportKonveksiTxs = filteredTransactions.filter(t => t.division === 'Konveksi');
+    const exportKonveksiIn = exportKonveksiTxs.filter(t => t.type === 'Pemasukan').reduce((sum, t) => sum + t.amount, 0);
+    const exportKonveksiOut = exportKonveksiTxs.filter(t => t.type === 'Pengeluaran').reduce((sum, t) => sum + t.amount, 0);
+    const exportKonveksiProfit = exportKonveksiIn - exportKonveksiOut;
+
+    const exportSablonTxs = filteredTransactions.filter(t => t.division === 'Sablon');
+    const exportSablonIn = exportSablonTxs.filter(t => t.type === 'Pemasukan').reduce((sum, t) => sum + t.amount, 0);
+    const exportSablonOut = exportSablonTxs.filter(t => t.type === 'Pengeluaran').reduce((sum, t) => sum + t.amount, 0);
+    const exportSablonProfit = exportSablonIn - exportSablonOut;
+
+    const exportAksesoriTxs = filteredTransactions.filter(t => t.division === 'Aksesori');
+    const exportAksesoriIn = exportAksesoriTxs.filter(t => t.type === 'Pemasukan').reduce((sum, t) => sum + t.amount, 0);
+    const exportAksesoriOut = exportAksesoriTxs.filter(t => t.type === 'Pengeluaran').reduce((sum, t) => sum + t.amount, 0);
+    const exportAksesoriProfit = exportAksesoriIn - exportAksesoriOut;
+
+    const exportAlatTxs = filteredTransactions.filter(t => t.division === 'Alat');
+    const exportAlatTotalValue = exportAlatTxs.reduce((sum, t) => sum + t.amount, 0);
+
+    const totalRow: any[] = [];
+    totalRow[0] = 'TOTAL';
+    totalRow[1] = ''; // Keterangan spacer for Konveksi
+    totalRow[2] = exportKonveksiIn;
+    totalRow[3] = exportKonveksiOut;
+    totalRow[4] = exportKonveksiProfit;
+
+    totalRow[5] = ''; // Keterangan spacer for Sablon
+    totalRow[6] = exportSablonIn;
+    totalRow[7] = exportSablonOut;
+    totalRow[8] = exportSablonProfit;
+
+    totalRow[9] = ''; // Keterangan spacer for Aksesori
+    totalRow[10] = exportAksesoriIn;
+    totalRow[11] = exportAksesoriOut;
+    totalRow[12] = exportAksesoriProfit;
+
+    totalRow[13] = ''; // Keterangan spacer for Alat
+    totalRow[14] = exportAlatTotalValue;
+
+    aoa.push(totalRow);
+
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!merges'] = merges;
+
+    // Apply styles to all cells in the sheet
+    const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:O2');
+    
+    for (let r = range.s.r; r <= range.e.r; r++) {
+      for (let c = range.s.c; c <= range.e.c; c++) {
+        const cellRef = XLSX.utils.encode_cell({ r, c });
+        if (!ws[cellRef]) {
+          ws[cellRef] = { t: 's', v: '' };
+        }
+        
+        const cell = ws[cellRef];
+        
+        // Base Style
+        const cellStyle: any = {
+          font: { name: 'Segoe UI', sz: 10, color: { rgb: '1E293B' } },
+          alignment: { vertical: 'center' },
+          border: {
+            top: { style: 'thin', color: { rgb: 'E2E8F0' } },
+            bottom: { style: 'thin', color: { rgb: 'E2E8F0' } },
+            left: { style: 'thin', color: { rgb: 'E2E8F0' } },
+            right: { style: 'thin', color: { rgb: 'E2E8F0' } }
+          }
+        };
+
+        if (r === 0) {
+          // Row 0: Category Headers
+          cellStyle.font = { name: 'Segoe UI', sz: 11, bold: true, color: { rgb: 'FFFFFF' } };
+          cellStyle.alignment = { vertical: 'center', horizontal: 'center' };
+          
+          if (c === 0) {
+            cellStyle.fill = { fgColor: { rgb: '1E293B' } }; // Tanggal (Slate-800)
+          } else if (c >= 1 && c <= 4) {
+            cellStyle.fill = { fgColor: { rgb: '312E81' } }; // Konveksi (Indigo-900)
+          } else if (c >= 5 && c <= 8) {
+            cellStyle.fill = { fgColor: { rgb: '064E3B' } }; // Sablon (Emerald-900)
+          } else if (c >= 9 && c <= 12) {
+            cellStyle.fill = { fgColor: { rgb: '78350F' } }; // Aksesori (Amber-900)
+          } else if (c >= 13 && c <= 14) {
+            cellStyle.fill = { fgColor: { rgb: '0C4A6E' } }; // Alat (Sky-900)
+          }
+        }
+        else if (r === 1) {
+          // Row 1: Sub Headers
+          cellStyle.font = { name: 'Segoe UI', sz: 9.5, bold: true };
+          cellStyle.alignment = { vertical: 'center', horizontal: 'center' };
+          
+          if (c === 0) {
+            cellStyle.fill = { fgColor: { rgb: '1E293B' } }; // Tanggal (merged from Row 0)
+            cellStyle.font.color = { rgb: 'FFFFFF' };
+          } else if (c >= 1 && c <= 4) {
+            cellStyle.fill = { fgColor: { rgb: 'EEF2FF' } }; // Light Indigo
+            cellStyle.font.color = { rgb: '312E81' };
+          } else if (c >= 5 && c <= 8) {
+            cellStyle.fill = { fgColor: { rgb: 'ECFDF5' } }; // Light Emerald
+            cellStyle.font.color = { rgb: '064E3B' };
+          } else if (c >= 9 && c <= 12) {
+            cellStyle.fill = { fgColor: { rgb: 'FFFBEB' } }; // Light Amber
+            cellStyle.font.color = { rgb: '78350F' };
+          } else if (c >= 13 && c <= 14) {
+            cellStyle.fill = { fgColor: { rgb: 'F0F9FF' } }; // Light Sky
+            cellStyle.font.color = { rgb: '0C4A6E' };
+          }
+        }
+        else if (r === range.e.r) {
+          // Row Last: TOTAL Footer Row
+          cellStyle.font = { name: 'Segoe UI', sz: 10, bold: true, color: { rgb: 'FFFFFF' } };
+          cellStyle.fill = { fgColor: { rgb: '1E293B' } }; // Slate-800
+          cellStyle.border = {
+            top: { style: 'medium', color: { rgb: '0F172A' } },
+            bottom: { style: 'medium', color: { rgb: '0F172A' } },
+            left: { style: 'thin', color: { rgb: '475569' } },
+            right: { style: 'thin', color: { rgb: '475569' } }
+          };
+          
+          if (c === 0) {
+            cellStyle.alignment = { vertical: 'center', horizontal: 'center' };
+          } else if (c === 1 || c === 5 || c === 9 || c === 13) {
+            cellStyle.alignment = { vertical: 'center', horizontal: 'left' };
+          } else {
+            cellStyle.alignment = { vertical: 'center', horizontal: 'right' };
+            if (typeof cell.v === 'number') {
+              cell.z = '#,##0';
+            }
+          }
+        }
+        else {
+          // Data Rows: Zebra striping for improved readability
+          const isOdd = (r % 2 === 1);
+          if (isOdd) {
+            cellStyle.fill = { fgColor: { rgb: 'F8FAFC' } }; // Slate-50 background
+          } else {
+            cellStyle.fill = { fgColor: { rgb: 'FFFFFF' } };
+          }
+
+          // Alignments & coloring specific to data columns
+          if (c === 0) {
+            cellStyle.alignment = { vertical: 'center', horizontal: 'center' };
+          } else if (c === 1 || c === 5 || c === 9 || c === 13) {
+            cellStyle.alignment = { vertical: 'center', horizontal: 'left' };
+          } else {
+            cellStyle.alignment = { vertical: 'center', horizontal: 'right' };
+            if (typeof cell.v === 'number') {
+              cell.z = '#,##0';
+              
+              // Color 'Laba' columns text green for profit, red for loss
+              const isProfitCol = (c === 4 || c === 8 || c === 12);
+              if (isProfitCol) {
+                if (cell.v < 0) {
+                  cellStyle.font.color = { rgb: 'DC2626' }; // Red-600
+                  cellStyle.font.bold = true;
+                } else if (cell.v > 0) {
+                  cellStyle.font.color = { rgb: '16A34A' }; // Green-600
+                  cellStyle.font.bold = true;
+                }
+              }
+            }
+          }
+        }
+
+        cell.s = cellStyle;
+      }
+    }
 
     // Set column widths to make it super clean and neat
     const colWidths = [
-      { wch: 6 },   // No
-      { wch: 12 },  // Tanggal
-      { wch: 25 },  // Keterangan Konveksi
-      { wch: 18 },  // Pemasukan Konveksi
-      { wch: 18 },  // Pengeluaran Konveksi
-      { wch: 18 },  // Laba Konveksi
-      { wch: 25 },  // Keterangan Sablon
-      { wch: 18 },  // Pemasukan Sablon
-      { wch: 18 },  // Pengeluaran Sablon
-      { wch: 18 },  // Laba Sablon
-      { wch: 25 },  // Keterangan Aksesori
-      { wch: 18 },  // Pemasukan Aksesori
-      { wch: 18 },  // Pengeluaran Aksesori
-      { wch: 18 },  // Laba Aksesori
-      { wch: 25 },  // Keterangan Alat
-      { wch: 18 }   // Transaksi Alat
+      { wch: 14 },  // Tanggal
+      { wch: 28 },  // Keterangan Konveksi
+      { wch: 16 },  // Pemasukan Konveksi
+      { wch: 16 },  // Pengeluaran Konveksi
+      { wch: 16 },  // Laba Konveksi
+      { wch: 28 },  // Keterangan Sablon
+      { wch: 16 },  // Pemasukan Sablon
+      { wch: 16 },  // Pengeluaran Sablon
+      { wch: 16 },  // Laba Sablon
+      { wch: 28 },  // Keterangan Aksesori
+      { wch: 16 },  // Pemasukan Aksesori
+      { wch: 16 },  // Pengeluaran Aksesori
+      { wch: 16 },  // Laba Aksesori
+      { wch: 28 },  // Keterangan Alat
+      { wch: 16 }   // Transaksi Alat
     ];
     ws['!cols'] = colWidths;
 
@@ -1407,7 +1656,7 @@ export default function App() {
     XLSX.utils.book_append_sheet(wb, ws, 'Laporan Keuangan');
 
     XLSX.writeFile(wb, `Laporan_Keuangan_Mahya_Apparel_${new Date().toISOString().split('T')[0]}.xlsx`);
-    triggerToast('Laporan Keuangan Excel (.xlsx) berhasil diunduh dengan rapi!');
+    triggerToast('Laporan Keuangan Excel (.xlsx) berhasil diunduh dengan warna & tata letak Monitor Arus!');
   };
 
   // Ekspor Laporan Berkala (Bulanan, 3 Bulanan, atau Tahunan) ke Excel asli (.xlsx)
@@ -1478,76 +1727,144 @@ export default function App() {
 
   // 2. Salin Data dalam format TSV (Tab Separated) untuk paste langsung ke Google Sheets
   const copyDataForGoogleSheets = () => {
-    const headers = [
+    // We group by date just like the live table
+    const uniqueDates = Array.from(new Set(filteredTransactions.map(t => t.date as string)))
+      .sort((a, b) => (b as string).localeCompare(a as string)) as string[]; // Newest first
+
+    if (uniqueDates.length === 0) {
+      triggerToast('Tidak ada data transaksi ditemukan untuk disalin.');
+      return;
+    }
+
+    const tsvLines: string[] = [];
+
+    // Header 1: Division headings
+    tsvLines.push([
       'Tanggal',
-      'Keterangan Konveksi',
-      'Pemasukan Konveksi',
-      'Pengeluaran Konveksi',
-      'Laba Konveksi',
-      'Keterangan Sablon',
-      'Pemasukan Sablon',
-      'Pengeluaran Sablon',
-      'Laba Sablon',
-      'Keterangan Aksesori',
-      'Pemasukan Aksesori',
-      'Pengeluaran Aksesori',
-      'Laba Aksesori',
-      'Keterangan Alat',
-      'Transaksi Alat'
-    ];
+      'Konveksi', '', '', '',
+      'Sablon', '', '', '',
+      'Aksesori', '', '', '',
+      'Alat', ''
+    ].join('\t'));
 
-    const tsvRows = [headers.join('\t')];
+    // Header 2: Sub headings
+    tsvLines.push([
+      '',
+      'Keterangan', 'Masuk', 'Keluar', 'Laba',
+      'Keterangan', 'Masuk', 'Keluar', 'Laba',
+      'Keterangan', 'Masuk', 'Keluar', 'Laba',
+      'Keterangan', 'Transaksi'
+    ].join('\t'));
 
-    transactions.forEach((tx) => {
-      let kIn = 0, kOut = 0, kProf = 0;
-      let sIn = 0, sOut = 0, sProf = 0;
-      let aIn = 0, aOut = 0, aProf = 0;
-      let eqVal = 0;
+    uniqueDates.forEach((date) => {
+      const dateKonveksi = filteredTransactions.filter(t => t.date === date && t.division === 'Konveksi');
+      const dateSablon = filteredTransactions.filter(t => t.date === date && t.division === 'Sablon');
+      const dateAksesori = filteredTransactions.filter(t => t.date === date && t.division === 'Aksesori');
+      const dateAlat = filteredTransactions.filter(t => t.date === date && t.division === 'Alat');
 
-      let kDesc = '';
-      let sDesc = '';
-      let aDesc = '';
-      let eqDesc = '';
+      const dateMaxRows = Math.max(
+        dateKonveksi.length,
+        dateSablon.length,
+        dateAksesori.length,
+        dateAlat.length
+      );
 
-      if (tx.division === 'Konveksi') {
-        kDesc = tx.description;
-        if (tx.type === 'Pemasukan') { kIn = tx.amount; kProf = tx.amount; }
-        else { kOut = tx.amount; kProf = -tx.amount; }
-      } else if (tx.division === 'Sablon') {
-        sDesc = tx.description;
-        if (tx.type === 'Pemasukan') { sIn = tx.amount; sProf = tx.amount; }
-        else { sOut = tx.amount; sProf = -tx.amount; }
-      } else if (tx.division === 'Aksesori') {
-        aDesc = tx.description;
-        if (tx.type === 'Pemasukan') { aIn = tx.amount; aProf = tx.amount; }
-        else { aOut = tx.amount; aProf = -tx.amount; }
-      } else if (tx.division === 'Alat') {
-        eqDesc = tx.description;
-        eqVal = tx.amount;
+      for (let j = 0; j < dateMaxRows; j++) {
+        const txK = dateKonveksi[j];
+        const txS = dateSablon[j];
+        const txA = dateAksesori[j];
+        const txE = dateAlat[j];
+
+        const row: string[] = [];
+        
+        // Col 0: Tanggal (only on the first row of this date group)
+        row[0] = j === 0 ? date : '';
+
+        // Konveksi
+        if (txK) {
+          row[1] = txK.description;
+          row[2] = String(txK.type === 'Pemasukan' ? txK.amount : 0);
+          row[3] = String(txK.type === 'Pengeluaran' ? txK.amount : 0);
+          row[4] = String(txK.type === 'Pemasukan' ? txK.amount : -txK.amount);
+        } else {
+          row[1] = ''; row[2] = ''; row[3] = ''; row[4] = '';
+        }
+
+        // Sablon
+        if (txS) {
+          row[5] = txS.description;
+          row[6] = String(txS.type === 'Pemasukan' ? txS.amount : 0);
+          row[7] = String(txS.type === 'Pengeluaran' ? txS.amount : 0);
+          row[8] = String(txS.type === 'Pemasukan' ? txS.amount : -txS.amount);
+        } else {
+          row[5] = ''; row[6] = ''; row[7] = ''; row[8] = '';
+        }
+
+        // Aksesori
+        if (txA) {
+          row[9] = txA.description;
+          row[10] = String(txA.type === 'Pemasukan' ? txA.amount : 0);
+          row[11] = String(txA.type === 'Pengeluaran' ? txA.amount : 0);
+          row[12] = String(txA.type === 'Pemasukan' ? txA.amount : -txA.amount);
+        } else {
+          row[9] = ''; row[10] = ''; row[11] = ''; row[12] = '';
+        }
+
+        // Alat
+        if (txE) {
+          row[13] = txE.description;
+          row[14] = String(txE.amount);
+        } else {
+          row[13] = ''; row[14] = '';
+        }
+
+        tsvLines.push(row.join('\t'));
       }
-
-      const row = [
-        tx.date,
-        kDesc,
-        kIn || '',
-        kOut || '',
-        kProf || '',
-        sDesc,
-        sIn || '',
-        sOut || '',
-        sProf || '',
-        aDesc,
-        aIn || '',
-        aOut || '',
-        aProf || '',
-        eqDesc,
-        eqVal || ''
-      ];
-      tsvRows.push(row.join('\t'));
     });
 
-    navigator.clipboard.writeText(tsvRows.join('\n'));
-    triggerToast('Data disalin! Buka Google Sheets & tekan Ctrl+V (Cmd+V) di sel pertama.');
+    // Calculate totals for the footer
+    const exportKonveksiTxs = filteredTransactions.filter(t => t.division === 'Konveksi');
+    const exportKonveksiIn = exportKonveksiTxs.filter(t => t.type === 'Pemasukan').reduce((sum, t) => sum + t.amount, 0);
+    const exportKonveksiOut = exportKonveksiTxs.filter(t => t.type === 'Pengeluaran').reduce((sum, t) => sum + t.amount, 0);
+    const exportKonveksiProfit = exportKonveksiIn - exportKonveksiOut;
+
+    const exportSablonTxs = filteredTransactions.filter(t => t.division === 'Sablon');
+    const exportSablonIn = exportSablonTxs.filter(t => t.type === 'Pemasukan').reduce((sum, t) => sum + t.amount, 0);
+    const exportSablonOut = exportSablonTxs.filter(t => t.type === 'Pengeluaran').reduce((sum, t) => sum + t.amount, 0);
+    const exportSablonProfit = exportSablonIn - exportSablonOut;
+
+    const exportAksesoriTxs = filteredTransactions.filter(t => t.division === 'Aksesori');
+    const exportAksesoriIn = exportAksesoriTxs.filter(t => t.type === 'Pemasukan').reduce((sum, t) => sum + t.amount, 0);
+    const exportAksesoriOut = exportAksesoriTxs.filter(t => t.type === 'Pengeluaran').reduce((sum, t) => sum + t.amount, 0);
+    const exportAksesoriProfit = exportAksesoriIn - exportAksesoriOut;
+
+    const exportAlatTxs = filteredTransactions.filter(t => t.division === 'Alat');
+    const exportAlatTotalValue = exportAlatTxs.reduce((sum, t) => sum + t.amount, 0);
+
+    const totalRow: string[] = [];
+    totalRow[0] = 'TOTAL';
+    totalRow[1] = '';
+    totalRow[2] = String(exportKonveksiIn);
+    totalRow[3] = String(exportKonveksiOut);
+    totalRow[4] = String(exportKonveksiProfit);
+
+    totalRow[5] = '';
+    totalRow[6] = String(exportSablonIn);
+    totalRow[7] = String(exportSablonOut);
+    totalRow[8] = String(exportSablonProfit);
+
+    totalRow[9] = '';
+    totalRow[10] = String(exportAksesoriIn);
+    totalRow[11] = String(exportAksesoriOut);
+    totalRow[12] = String(exportAksesoriProfit);
+
+    totalRow[13] = '';
+    totalRow[14] = String(exportAlatTotalValue);
+
+    tsvLines.push(totalRow.join('\t'));
+
+    navigator.clipboard.writeText(tsvLines.join('\n'));
+    triggerToast('Data disalin dengan tata letak Monitor Arus! Buka Google Sheets & tekan Ctrl+V (Cmd+V) di sel pertama.');
   };
 
   // 3. Simpan URL Google Sheets ke LocalStorage
@@ -2677,210 +2994,302 @@ else:
                     <thead className="sticky top-0 z-10 bg-slate-50 border-b-2 border-slate-200 text-[10px]">
                       {/* Layer 1: Division groupings */}
                       <tr>
-                        <th scope="col" rowSpan={2} className="px-3 py-3 font-extrabold uppercase tracking-wider text-slate-600 border-r border-slate-200 text-center bg-slate-100">
+                        <th scope="col" rowSpan={2} className="px-3 py-3 font-extrabold uppercase tracking-wider text-slate-600 border-r border-slate-200 text-center bg-slate-100 w-24">
                           Tanggal
                         </th>
-                        
+
                         {/* Konveksi */}
-                        <th scope="col" colSpan={4} className="px-2 py-1.5 text-center font-bold uppercase tracking-wider bg-indigo-50 text-indigo-900 border-r border-slate-200 border-b border-slate-200">
+                        <th scope="col" colSpan={5} className="px-2 py-1.5 text-center font-bold uppercase tracking-wider bg-indigo-50 text-indigo-900 border-r border-slate-200 border-b border-slate-200">
                           Konveksi
                         </th>
 
                         {/* Sablon */}
-                        <th scope="col" colSpan={4} className="px-2 py-1.5 text-center font-bold uppercase tracking-wider bg-emerald-50 text-emerald-900 border-r border-slate-200 border-b border-slate-200">
+                        <th scope="col" colSpan={5} className="px-2 py-1.5 text-center font-bold uppercase tracking-wider bg-emerald-50 text-emerald-900 border-r border-slate-200 border-b border-slate-200">
                           Sablon
                         </th>
 
                         {/* Aksesori */}
-                        <th scope="col" colSpan={4} className="px-2 py-1.5 text-center font-bold uppercase tracking-wider bg-amber-50 text-amber-900 border-r border-slate-200 border-b border-slate-200">
+                        <th scope="col" colSpan={5} className="px-2 py-1.5 text-center font-bold uppercase tracking-wider bg-amber-50 text-amber-900 border-r border-slate-200 border-b border-slate-200">
                           Aksesori
                         </th>
 
                         {/* Alat */}
-                        <th scope="col" colSpan={2} className="px-2 py-1.5 text-center font-bold uppercase tracking-wider bg-rose-50 text-rose-900 border-r border-slate-200 border-b border-slate-200">
+                        <th scope="col" colSpan={3} className="px-2 py-1.5 text-center font-bold uppercase tracking-wider bg-rose-50 text-rose-900 border-r border-slate-200 border-b border-slate-200">
                           Alat (Transaksi)
-                        </th>
-
-                        <th scope="col" rowSpan={2} className="px-2 py-3 text-center font-extrabold uppercase tracking-wider text-slate-600">
-                          Aksi
                         </th>
                       </tr>
 
                       {/* Layer 2: Sub-headers */}
                       <tr className="bg-slate-50/80 text-[9px] border-b border-slate-200">
-                        <th scope="col" className="px-2 py-2 text-indigo-950 font-bold border-r border-slate-100 bg-indigo-50/30">Keterangan</th>
+                        <th scope="col" className="px-2 py-2 text-indigo-950 font-bold border-r border-slate-100 bg-indigo-50/30 min-w-[220px] max-w-[280px]">Keterangan</th>
                         <th scope="col" className="px-2 py-2 text-slate-500 border-r border-slate-100">Masuk</th>
                         <th scope="col" className="px-2 py-2 text-slate-500 border-r border-slate-100">Keluar</th>
-                        <th scope="col" className="px-2 py-2 text-slate-900 font-extrabold bg-indigo-50/50 border-r border-slate-200">Laba</th>
+                        <th scope="col" className="px-2 py-2 text-slate-900 font-extrabold bg-indigo-50/50 border-r border-slate-100">Laba</th>
+                        <th scope="col" className="px-2 py-2 text-indigo-900 font-bold bg-indigo-50/40 border-r border-slate-200 text-center">Aksi</th>
 
-                        <th scope="col" className="px-2 py-2 text-emerald-950 font-bold border-r border-slate-100 bg-emerald-50/30">Keterangan</th>
+                        <th scope="col" className="px-2 py-2 text-emerald-950 font-bold border-r border-slate-100 bg-emerald-50/30 min-w-[220px] max-w-[280px]">Keterangan</th>
                         <th scope="col" className="px-2 py-2 text-slate-500 border-r border-slate-100">Masuk</th>
                         <th scope="col" className="px-2 py-2 text-slate-500 border-r border-slate-100">Keluar</th>
-                        <th scope="col" className="px-2 py-2 text-slate-900 font-extrabold bg-emerald-50/50 border-r border-slate-200">Laba</th>
+                        <th scope="col" className="px-2 py-2 text-slate-900 font-extrabold bg-emerald-50/50 border-r border-slate-100">Laba</th>
+                        <th scope="col" className="px-2 py-2 text-emerald-900 font-bold bg-emerald-50/40 border-r border-slate-200 text-center">Aksi</th>
 
-                        <th scope="col" className="px-2 py-2 text-amber-950 font-bold border-r border-slate-100 bg-amber-50/30">Keterangan</th>
+                        <th scope="col" className="px-2 py-2 text-amber-950 font-bold border-r border-slate-100 bg-amber-50/30 min-w-[220px] max-w-[280px]">Keterangan</th>
                         <th scope="col" className="px-2 py-2 text-slate-500 border-r border-slate-100">Masuk</th>
                         <th scope="col" className="px-2 py-2 text-slate-500 border-r border-slate-100">Keluar</th>
-                        <th scope="col" className="px-2 py-2 text-slate-900 font-extrabold bg-amber-50/50 border-r border-slate-200">Laba</th>
+                        <th scope="col" className="px-2 py-2 text-slate-900 font-extrabold bg-amber-50/50 border-r border-slate-100">Laba</th>
+                        <th scope="col" className="px-2 py-2 text-amber-900 font-bold bg-amber-50/40 border-r border-slate-200 text-center">Aksi</th>
 
-                        <th scope="col" className="px-2 py-2 text-rose-950 font-bold border-r border-slate-100 bg-rose-50/30">Keterangan</th>
-                        <th scope="col" className="px-2 py-2 text-slate-900 font-extrabold bg-rose-50/50 border-r border-slate-200">Transaksi</th>
+                        <th scope="col" className="px-2 py-2 text-rose-950 font-bold border-r border-slate-100 bg-rose-50/30 min-w-[220px] max-w-[280px]">Keterangan</th>
+                        <th scope="col" className="px-2 py-2 text-slate-900 font-extrabold bg-rose-50/50 border-r border-slate-100">Transaksi</th>
+                        <th scope="col" className="px-2 py-2 text-rose-900 font-bold bg-rose-50/40 border-r border-slate-200 text-center">Aksi</th>
                       </tr>
                     </thead>
 
                     <tbody className="divide-y divide-slate-100 bg-white">
                       <AnimatePresence>
-                        {filteredTransactions.length > 0 ? (
-                          filteredTransactions.map((tx) => {
-                            let kIn = 0, kOut = 0, kProf = 0;
-                            let sIn = 0, sOut = 0, sProf = 0;
-                            let aIn = 0, aOut = 0, aProf = 0;
-                            let eqVal = 0;
+                        {(() => {
+                          const uniqueDates = Array.from(new Set(filteredTransactions.map(t => t.date as string)))
+                            .sort((a, b) => (b as string).localeCompare(a as string)); // Sort descending (newest first)
 
-                            let kDesc = '';
-                            let sDesc = '';
-                            let aDesc = '';
-                            let eqDesc = '';
-
-                            if (tx.division === 'Konveksi') {
-                              kDesc = tx.description;
-                              if (tx.type === 'Pemasukan') {
-                                kIn = tx.amount;
-                                kProf = tx.amount;
-                              } else {
-                                kOut = tx.amount;
-                                kProf = -tx.amount;
-                              }
-                            } else if (tx.division === 'Sablon') {
-                              sDesc = tx.description;
-                              if (tx.type === 'Pemasukan') {
-                                sIn = tx.amount;
-                                sProf = tx.amount;
-                              } else {
-                                sOut = tx.amount;
-                                sProf = -tx.amount;
-                              }
-                            } else if (tx.division === 'Aksesori') {
-                              aDesc = tx.description;
-                              if (tx.type === 'Pemasukan') {
-                                aIn = tx.amount;
-                                aProf = tx.amount;
-                              } else {
-                                aOut = tx.amount;
-                                aProf = -tx.amount;
-                              }
-                            } else if (tx.division === 'Alat') {
-                              eqDesc = tx.description;
-                              eqVal = tx.amount;
-                            }
-
+                          if (uniqueDates.length === 0) {
                             return (
-                              <motion.tr 
-                                key={tx.id}
-                                initial={{ opacity: 0 }}
-                                animate={{ opacity: 1 }}
-                                exit={{ opacity: 0 }}
-                                className="hover:bg-slate-50/60 transition-all text-slate-700"
-                              >
-                                <td className="px-3 py-2 text-xs font-semibold text-slate-600 whitespace-nowrap border-r border-slate-100 bg-slate-50/20">
-                                  {tx.date}
-                                </td>
-                                
-                                {/* Konveksi Cells */}
-                                <td className="px-2 py-2 border-r border-slate-100 text-xs text-slate-800 break-words max-w-[150px] font-medium" title={kDesc}>
-                                  {kDesc || <span className="text-slate-300">-</span>}
-                                </td>
-                                <td className="px-2 py-2 border-r border-slate-100 text-right text-xs font-mono">{formatTableCell(kIn)}</td>
-                                <td className="px-2 py-2 border-r border-slate-100 text-right text-xs font-mono">{formatTableCell(kOut)}</td>
-                                <td className="px-2 py-2 bg-indigo-50/20 border-r border-slate-200 text-right font-medium text-xs font-mono">{formatTableProfitCell(kProf)}</td>
-
-                                {/* Sablon Cells */}
-                                <td className="px-2 py-2 border-r border-slate-100 text-xs text-slate-800 break-words max-w-[150px] font-medium" title={sDesc}>
-                                  {sDesc || <span className="text-slate-300">-</span>}
-                                </td>
-                                <td className="px-2 py-2 border-r border-slate-100 text-right text-xs font-mono">{formatTableCell(sIn)}</td>
-                                <td className="px-2 py-2 border-r border-slate-100 text-right text-xs font-mono">{formatTableCell(sOut)}</td>
-                                <td className="px-2 py-2 bg-emerald-50/20 border-r border-slate-200 text-right font-medium text-xs font-mono">{formatTableProfitCell(sProf)}</td>
-
-                                {/* Aksesori Cells */}
-                                <td className="px-2 py-2 border-r border-slate-100 text-xs text-slate-800 break-words max-w-[150px] font-medium" title={aDesc}>
-                                  {aDesc || <span className="text-slate-300">-</span>}
-                                </td>
-                                <td className="px-2 py-2 border-r border-slate-100 text-right text-xs font-mono">{formatTableCell(aIn)}</td>
-                                <td className="px-2 py-2 border-r border-slate-100 text-right text-xs font-mono">{formatTableCell(aOut)}</td>
-                                <td className="px-2 py-2 bg-amber-50/20 border-r border-slate-200 text-right font-medium text-xs font-mono">{formatTableProfitCell(aProf)}</td>
-
-                                {/* Alat Cells */}
-                                <td className="px-2 py-2 border-r border-slate-100 text-xs text-slate-800 break-words max-w-[150px] font-medium" title={eqDesc}>
-                                  {eqDesc || <span className="text-slate-300">-</span>}
-                                </td>
-                                <td className="px-2 py-2 bg-rose-50/10 border-r border-slate-200 text-right font-mono font-medium text-slate-700 text-xs">{formatTableCell(eqVal)}</td>
-
-                                {/* Delete / Edit */}
-                                <td className="px-2 py-2 text-center whitespace-nowrap">
-                                  <div className="flex items-center justify-center gap-1.5">
-                                    <button
-                                      onClick={() => handleStartEdit(tx)}
-                                      className="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 p-1 rounded-md transition-all inline-flex cursor-pointer"
-                                      title="Edit Catatan Transaksi"
-                                    >
-                                      <Pencil className="h-3.5 w-3.5" />
-                                    </button>
-                                    <button
-                                      onClick={() => handleDeleteTransaction(tx.id)}
-                                      className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-1 rounded-md transition-all inline-flex cursor-pointer"
-                                      title="Hapus Transaksi"
-                                    >
-                                      <Trash2 className="h-3.5 w-3.5" />
-                                    </button>
+                              <tr>
+                                <td colSpan={19} className="px-4 py-16 text-center text-slate-400">
+                                  <div className="flex flex-col items-center justify-center space-y-2">
+                                    <Layers className="h-10 w-10 text-slate-300 animate-pulse" />
+                                    <span className="text-xs font-bold text-slate-700">Tidak ada transaksi ditemukan</span>
+                                    <p className="text-[10px] text-slate-400">Gunakan pencarian lain atau input transaksi baru.</p>
                                   </div>
                                 </td>
-                              </motion.tr>
+                              </tr>
                             );
-                          })
-                        ) : (
-                          <tr>
-                            <td colSpan={16} className="px-4 py-16 text-center text-slate-400">
-                              <div className="flex flex-col items-center justify-center space-y-2">
-                                <Layers className="h-10 w-10 text-slate-300 animate-pulse" />
-                                <span className="text-xs font-bold text-slate-700">Tidak ada transaksi ditemukan</span>
-                                <p className="text-[10px] text-slate-400">Gunakan pencarian lain atau input transaksi baru.</p>
-                              </div>
-                            </td>
-                          </tr>
-                        )}
+                          }
+
+                          const rows: React.ReactNode[] = [];
+                          uniqueDates.forEach((date) => {
+                            const dateKonveksi = filteredTransactions.filter(t => t.date === date && t.division === 'Konveksi');
+                            const dateSablon = filteredTransactions.filter(t => t.date === date && t.division === 'Sablon');
+                            const dateAksesori = filteredTransactions.filter(t => t.date === date && t.division === 'Aksesori');
+                            const dateAlat = filteredTransactions.filter(t => t.date === date && t.division === 'Alat');
+
+                            const dateMaxRows = Math.max(
+                              dateKonveksi.length,
+                              dateSablon.length,
+                              dateAksesori.length,
+                              dateAlat.length
+                            );
+
+                            for (let j = 0; j < dateMaxRows; j++) {
+                              const txK = dateKonveksi[j];
+                              const txS = dateSablon[j];
+                              const txA = dateAksesori[j];
+                              const txE = dateAlat[j];
+
+                              rows.push(
+                                <motion.tr 
+                                  key={`${date}-${j}`}
+                                  initial={{ opacity: 0 }}
+                                  animate={{ opacity: 1 }}
+                                  className="hover:bg-slate-50/60 transition-all text-slate-700 text-xs border-b border-slate-100"
+                                >
+                                  {/* 1. Tanggal Column on the left */}
+                                  {j === 0 ? (
+                                    <td 
+                                      rowSpan={dateMaxRows} 
+                                      className="px-3 py-2.5 font-bold text-slate-700 border-r border-slate-200 text-center bg-slate-50/40 text-xs whitespace-nowrap align-middle"
+                                    >
+                                      {date}
+                                    </td>
+                                  ) : null}
+
+                                  {/* Konveksi Cells */}
+                                  {txK ? (
+                                    <>
+                                      <td className="px-2 py-2 border-r border-slate-100 text-xs text-slate-800 break-words min-w-[220px] max-w-[280px] font-medium">
+                                        <div className="text-xs text-slate-800 font-semibold">{txK.description}</div>
+                                      </td>
+                                      <td className="px-2 py-2 border-r border-slate-100 text-right text-xs font-mono">{formatTableCell(txK.type === 'Pemasukan' ? txK.amount : 0)}</td>
+                                      <td className="px-2 py-2 border-r border-slate-100 text-right text-xs font-mono">{formatTableCell(txK.type === 'Pengeluaran' ? txK.amount : 0)}</td>
+                                      <td className="px-2 py-2 bg-indigo-50/20 border-r border-slate-100 text-right font-medium text-xs font-mono">{formatTableProfitCell(txK.type === 'Pemasukan' ? txK.amount : -txK.amount)}</td>
+                                      <td className="px-2 py-2 border-r border-slate-200 text-center whitespace-nowrap bg-indigo-50/10">
+                                        <div className="flex items-center justify-center gap-1.5">
+                                          <button
+                                            onClick={() => handleStartEdit(txK)}
+                                            className="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 p-1 rounded-md transition-all inline-flex cursor-pointer"
+                                            title="Edit"
+                                          >
+                                            <Pencil className="h-3 w-3" />
+                                          </button>
+                                          <button
+                                            onClick={() => handleDeleteTransaction(txK.id)}
+                                            className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-1 rounded-md transition-all inline-flex cursor-pointer"
+                                            title="Hapus"
+                                          >
+                                            <Trash2 className="h-3 w-3" />
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <td className="px-2 py-2 border-r border-slate-100 text-slate-300 text-center font-medium min-w-[220px] max-w-[280px]">-</td>
+                                      <td className="px-2 py-2 border-r border-slate-100 text-slate-300 text-center font-mono">-</td>
+                                      <td className="px-2 py-2 border-r border-slate-100 text-slate-300 text-center font-mono">-</td>
+                                      <td className="px-2 py-2 bg-indigo-50/20 border-r border-slate-100 text-slate-300 text-center font-mono">-</td>
+                                      <td className="px-2 py-2 border-r border-slate-200 text-center whitespace-nowrap bg-indigo-50/10 text-slate-300">-</td>
+                                    </>
+                                  )}
+
+                                  {/* Sablon Cells */}
+                                  {txS ? (
+                                    <>
+                                      <td className="px-2 py-2 border-r border-slate-100 text-xs text-slate-800 break-words min-w-[220px] max-w-[280px] font-medium">
+                                        <div className="text-xs text-slate-800 font-semibold">{txS.description}</div>
+                                      </td>
+                                      <td className="px-2 py-2 border-r border-slate-100 text-right text-xs font-mono">{formatTableCell(txS.type === 'Pemasukan' ? txS.amount : 0)}</td>
+                                      <td className="px-2 py-2 border-r border-slate-100 text-right text-xs font-mono">{formatTableCell(txS.type === 'Pengeluaran' ? txS.amount : 0)}</td>
+                                      <td className="px-2 py-2 bg-emerald-50/20 border-r border-slate-100 text-right font-medium text-xs font-mono">{formatTableProfitCell(txS.type === 'Pemasukan' ? txS.amount : -txS.amount)}</td>
+                                      <td className="px-2 py-2 border-r border-slate-200 text-center whitespace-nowrap bg-emerald-50/10">
+                                        <div className="flex items-center justify-center gap-1.5">
+                                          <button
+                                            onClick={() => handleStartEdit(txS)}
+                                            className="text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 p-1 rounded-md transition-all inline-flex cursor-pointer"
+                                            title="Edit"
+                                          >
+                                            <Pencil className="h-3 w-3" />
+                                          </button>
+                                          <button
+                                            onClick={() => handleDeleteTransaction(txS.id)}
+                                            className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-1 rounded-md transition-all inline-flex cursor-pointer"
+                                            title="Hapus"
+                                          >
+                                            <Trash2 className="h-3 w-3" />
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <td className="px-2 py-2 border-r border-slate-100 text-slate-300 text-center font-medium min-w-[220px] max-w-[280px]">-</td>
+                                      <td className="px-2 py-2 border-r border-slate-100 text-slate-300 text-center font-mono">-</td>
+                                      <td className="px-2 py-2 border-r border-slate-100 text-slate-300 text-center font-mono">-</td>
+                                      <td className="px-2 py-2 bg-emerald-50/20 border-r border-slate-100 text-slate-300 text-center font-mono">-</td>
+                                      <td className="px-2 py-2 border-r border-slate-200 text-center whitespace-nowrap bg-emerald-50/10 text-slate-300">-</td>
+                                    </>
+                                  )}
+
+                                  {/* Aksesori Cells */}
+                                  {txA ? (
+                                    <>
+                                      <td className="px-2 py-2 border-r border-slate-100 text-xs text-slate-800 break-words min-w-[220px] max-w-[280px] font-medium">
+                                        <div className="text-xs text-slate-800 font-semibold">{txA.description}</div>
+                                      </td>
+                                      <td className="px-2 py-2 border-r border-slate-100 text-right text-xs font-mono">{formatTableCell(txA.type === 'Pemasukan' ? txA.amount : 0)}</td>
+                                      <td className="px-2 py-2 border-r border-slate-100 text-right text-xs font-mono">{formatTableCell(txA.type === 'Pengeluaran' ? txA.amount : 0)}</td>
+                                      <td className="px-2 py-2 bg-amber-50/20 border-r border-slate-100 text-right font-medium text-xs font-mono">{formatTableProfitCell(txA.type === 'Pemasukan' ? txA.amount : -txA.amount)}</td>
+                                      <td className="px-2 py-2 border-r border-slate-200 text-center whitespace-nowrap bg-amber-50/10">
+                                        <div className="flex items-center justify-center gap-1.5">
+                                          <button
+                                            onClick={() => handleStartEdit(txA)}
+                                            className="text-slate-400 hover:text-amber-600 hover:bg-amber-50 p-1 rounded-md transition-all inline-flex cursor-pointer"
+                                            title="Edit"
+                                          >
+                                            <Pencil className="h-3 w-3" />
+                                          </button>
+                                          <button
+                                            onClick={() => handleDeleteTransaction(txA.id)}
+                                            className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-1 rounded-md transition-all inline-flex cursor-pointer"
+                                            title="Hapus"
+                                          >
+                                            <Trash2 className="h-3 w-3" />
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <td className="px-2 py-2 border-r border-slate-100 text-slate-300 text-center font-medium min-w-[220px] max-w-[280px]">-</td>
+                                      <td className="px-2 py-2 border-r border-slate-100 text-slate-300 text-center font-mono">-</td>
+                                      <td className="px-2 py-2 border-r border-slate-100 text-slate-300 text-center font-mono">-</td>
+                                      <td className="px-2 py-2 bg-amber-50/20 border-r border-slate-100 text-slate-300 text-center font-mono">-</td>
+                                      <td className="px-2 py-2 border-r border-slate-200 text-center whitespace-nowrap bg-amber-50/10 text-slate-300">-</td>
+                                    </>
+                                  )}
+
+                                  {/* Alat Cells */}
+                                  {txE ? (
+                                    <>
+                                      <td className="px-2 py-2 border-r border-slate-100 text-xs text-slate-800 break-words min-w-[220px] max-w-[280px] font-medium">
+                                        <div className="text-xs text-slate-800 font-semibold">{txE.description}</div>
+                                      </td>
+                                      <td className="px-2 py-2 bg-rose-50/10 border-r border-slate-100 text-right font-mono font-medium text-slate-700 text-xs">{formatTableCell(txE.amount)}</td>
+                                      <td className="px-2 py-2 border-r border-slate-200 text-center whitespace-nowrap bg-rose-50/10">
+                                        <div className="flex items-center justify-center gap-1.5">
+                                          <button
+                                            onClick={() => handleStartEdit(txE)}
+                                            className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-1 rounded-md transition-all inline-flex cursor-pointer"
+                                            title="Edit"
+                                          >
+                                            <Pencil className="h-3 w-3" />
+                                          </button>
+                                          <button
+                                            onClick={() => handleDeleteTransaction(txE.id)}
+                                            className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-1 rounded-md transition-all inline-flex cursor-pointer"
+                                            title="Hapus"
+                                          >
+                                            <Trash2 className="h-3 w-3" />
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <td className="px-2 py-2 border-r border-slate-100 text-slate-300 text-center font-medium min-w-[220px] max-w-[280px]">-</td>
+                                      <td className="px-2 py-2 bg-rose-50/10 border-r border-slate-100 text-slate-300 text-center font-mono">-</td>
+                                      <td className="px-2 py-2 border-r border-slate-200 text-center whitespace-nowrap bg-rose-50/10 text-slate-300">-</td>
+                                    </>
+                                  )}
+                                </motion.tr>
+                              );
+                            }
+                          });
+                          return rows;
+                        })()}
                       </AnimatePresence>
                     </tbody>
 
                     {/* Total Row */}
                     {transactions.length > 0 && (
-                      <tfoot className="bg-slate-100 font-extrabold text-slate-800 border-t-2 border-slate-300">
-                        <tr className="text-[10px]">
-                          <td className="px-3 py-3 text-center border-r border-slate-200 font-black tracking-wide bg-slate-50">TOTAL:</td>
-                          
+                      <tfoot className="bg-slate-100 font-extrabold text-slate-800 border-t-2 border-slate-300 text-[10px]">
+                        <tr>
+                          {/* Tanggal column spacer */}
+                          <td className="px-2 py-3 text-center border-r border-slate-200 font-black tracking-wide bg-slate-50">TOTAL:</td>
+
                           {/* Konveksi */}
-                          <td className="bg-slate-50 border-r border-slate-100"></td>
+                          <td className="bg-slate-50 border-r border-slate-100 min-w-[220px] max-w-[280px]"></td>
                           <td className="px-2 py-3 text-right bg-indigo-50/30 border-r border-slate-100 text-indigo-900 font-mono font-bold">{formatCurrency(konveksiFin.income, false)}</td>
                           <td className="px-2 py-3 text-right bg-indigo-50/30 border-r border-slate-100 text-rose-700 font-mono font-bold">{formatCurrency(konveksiFin.expense, false)}</td>
-                          <td className="px-2 py-3 text-right bg-indigo-100/60 border-r border-slate-200 font-black font-mono text-indigo-950">{formatCurrency(konveksiFin.profit)}</td>
+                          <td className="px-2 py-3 text-right bg-indigo-100/60 border-r border-slate-100 font-black font-mono text-indigo-950">{formatCurrency(konveksiFin.profit)}</td>
+                          <td className="bg-slate-50 border-r border-slate-200"></td>
 
                           {/* Sablon */}
-                          <td className="bg-slate-50 border-r border-slate-100"></td>
+                          <td className="bg-slate-50 border-r border-slate-100 min-w-[220px] max-w-[280px]"></td>
                           <td className="px-2 py-3 text-right bg-emerald-50/30 border-r border-slate-100 text-emerald-900 font-mono font-bold">{formatCurrency(sablonFin.income, false)}</td>
                           <td className="px-2 py-3 text-right bg-emerald-50/30 border-r border-slate-100 text-rose-700 font-mono font-bold">{formatCurrency(sablonFin.expense, false)}</td>
-                          <td className="px-2 py-3 text-right bg-emerald-100/60 border-r border-slate-200 font-black font-mono text-emerald-950">{formatCurrency(sablonFin.profit)}</td>
+                          <td className="px-2 py-3 text-right bg-emerald-100/60 border-r border-slate-100 font-black font-mono text-emerald-950">{formatCurrency(sablonFin.profit)}</td>
+                          <td className="bg-slate-50 border-r border-slate-200"></td>
 
                           {/* Aksesori */}
-                          <td className="bg-slate-50 border-r border-slate-100"></td>
+                          <td className="bg-slate-50 border-r border-slate-100 min-w-[220px] max-w-[280px]"></td>
                           <td className="px-2 py-3 text-right bg-amber-50/30 border-r border-slate-100 text-amber-900 font-mono font-bold">{formatCurrency(aksesoriFin.income, false)}</td>
                           <td className="px-2 py-3 text-right bg-amber-50/30 border-r border-slate-100 text-rose-700 font-mono font-bold">{formatCurrency(aksesoriFin.expense, false)}</td>
-                          <td className="px-2 py-3 text-right bg-amber-100/60 border-r border-slate-200 font-black font-mono text-amber-950">{formatCurrency(aksesoriFin.profit)}</td>
+                          <td className="px-2 py-3 text-right bg-amber-100/60 border-r border-slate-100 font-black font-mono text-amber-950">{formatCurrency(aksesoriFin.profit)}</td>
+                          <td className="bg-slate-50 border-r border-slate-200"></td>
 
                           {/* Alat */}
-                          <td className="bg-slate-50 border-r border-slate-100"></td>
-                          <td className="px-2 py-3 text-right bg-rose-100/60 border-r border-slate-200 font-black font-mono text-rose-950">{formatCurrency(alatTotalValue)}</td>
-
-                          <td className="px-2 py-3 bg-slate-100"></td>
+                          <td className="bg-slate-50 border-r border-slate-100 min-w-[220px] max-w-[280px]"></td>
+                          <td className="px-2 py-3 text-right bg-rose-100/60 border-r border-slate-100 font-black font-mono text-rose-950">{formatCurrency(alatTotalValue)}</td>
+                          <td className="bg-slate-50 border-r border-slate-200"></td>
                         </tr>
                       </tfoot>
                     )}
