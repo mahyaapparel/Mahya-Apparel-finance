@@ -44,7 +44,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Transaction, Division, TransactionType, ApprovalRequest, AppUser } from './types';
-import { auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged, signInAnonymously } from './firebase';
+import { auth, db, googleProvider, signInWithPopup, signOut, onAuthStateChanged, signInAnonymously, OperationType, handleFirestoreError } from './firebase';
 import { collection, doc, setDoc, deleteDoc, onSnapshot, getDoc } from 'firebase/firestore';
 import * as XLSX from 'xlsx';
 
@@ -207,6 +207,8 @@ export default function App() {
     localStorage.setItem('financial_dashboard_txs', JSON.stringify(transactions));
   }, [transactions]);
 
+  const [isCloudConnected, setIsCloudConnected] = useState<boolean>(true);
+
   // Refs to avoid stale closures in onSnapshot
   const transactionsRef = useRef<Transaction[]>(transactions);
   const approvalRequestsRef = useRef<ApprovalRequest[]>(approvalRequests);
@@ -241,27 +243,41 @@ export default function App() {
         // Sync to users collection in Firestore with retry
         if (oauthUser.email) {
           const syncUserToFirestore = async (retries = 3, delay = 1500) => {
+            const userDocId = oauthUser.email.toLowerCase().replace(/\./g, '_');
+            const userDocRef = doc(db, 'users', userDocId);
+            
             try {
-              const userDocId = oauthUser.email.toLowerCase().replace(/\./g, '_');
-              const userDocRef = doc(db, 'users', userDocId);
-              const userSnap = await getDoc(userDocRef);
+              let userSnap;
+              try {
+                userSnap = await getDoc(userDocRef);
+              } catch (err) {
+                return handleFirestoreError(err, OperationType.GET, `users/${userDocId}`);
+              }
               const nowIso = new Date().toISOString();
 
               if (userSnap.exists()) {
-                await setDoc(userDocRef, {
-                  name: oauthUser.name,
-                  picture: oauthUser.picture,
-                  lastLoginAt: nowIso
-                }, { merge: true });
+                try {
+                  await setDoc(userDocRef, {
+                    name: oauthUser.name,
+                    picture: oauthUser.picture,
+                    lastLoginAt: nowIso
+                  }, { merge: true });
+                } catch (err) {
+                  return handleFirestoreError(err, OperationType.WRITE, `users/${userDocId}`);
+                }
               } else {
                 const defaultRole = oauthUser.email.toLowerCase() === 'mahyaapparel@gmail.com' ? 'Owner' : 'Admin';
-                await setDoc(userDocRef, {
-                  email: oauthUser.email,
-                  name: oauthUser.name,
-                  picture: oauthUser.picture,
-                  role: defaultRole,
-                  lastLoginAt: nowIso
-                });
+                try {
+                  await setDoc(userDocRef, {
+                    email: oauthUser.email,
+                    name: oauthUser.name,
+                    picture: oauthUser.picture,
+                    role: defaultRole,
+                    lastLoginAt: nowIso
+                  });
+                } catch (err) {
+                  return handleFirestoreError(err, OperationType.WRITE, `users/${userDocId}`);
+                }
               }
             } catch (err: any) {
               const errMsg = err?.message || String(err);
@@ -276,6 +292,7 @@ export default function App() {
                 }
               } else {
                 console.error('Error syncing user info to Firestore:', err);
+                throw err;
               }
             }
           };
@@ -306,6 +323,7 @@ export default function App() {
 
     // 1. Listen to transactions in real-time
     const unsubscribeTxs = onSnapshot(collection(db, 'transactions'), (snapshot) => {
+      setIsCloudConnected(true);
       const txList: Transaction[] = [];
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
@@ -342,10 +360,13 @@ export default function App() {
       setTransactions(txList);
     }, (error) => {
       console.error("Gagal sinkronisasi data transaksi dari Firestore:", error);
+      setIsCloudConnected(false);
+      handleFirestoreError(error, OperationType.LIST, 'transactions');
     });
 
     // 2. Listen to approval requests in real-time
     const unsubscribeRequests = onSnapshot(collection(db, 'approval_requests'), (snapshot) => {
+      setIsCloudConnected(true);
       const reqList: ApprovalRequest[] = [];
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
@@ -380,10 +401,13 @@ export default function App() {
       setApprovalRequests(reqList);
     }, (error) => {
       console.error("Gagal sinkronisasi data pengajuan dari Firestore:", error);
+      setIsCloudConnected(false);
+      handleFirestoreError(error, OperationType.LIST, 'approval_requests');
     });
 
     // 3. Listen to users in real-time
     const unsubscribeUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
+      setIsCloudConnected(true);
       const userList: AppUser[] = [];
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
@@ -400,6 +424,8 @@ export default function App() {
       setAppUsers(userList);
     }, (error) => {
       console.error("Gagal sinkronisasi data pengguna dari Firestore:", error);
+      setIsCloudConnected(false);
+      handleFirestoreError(error, OperationType.LIST, 'users');
     });
 
     return () => {
@@ -3442,8 +3468,8 @@ else:
       <footer className="flex flex-col sm:flex-row justify-between items-center bg-white border border-slate-200 rounded-2xl px-5 py-3 shadow-xs text-[10px] text-slate-400 font-semibold mt-1">
         <p>© 2026 Mahya Apparel Finance • Multi-Division Finance Core • Bento Grid Theme</p>
         <p className="flex items-center gap-1 mt-1 sm:mt-0">
-          <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full border border-white"></span>
-          System healthy - Last sync: Just now
+          <span className={`w-2.5 h-2.5 rounded-full border border-white ${isCloudConnected ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`}></span>
+          <span>{isCloudConnected ? 'Cloud Terhubung (Real-time)' : 'Koneksi Cloud Terputus (Mode Lokal)'}</span>
         </p>
       </footer>
 
