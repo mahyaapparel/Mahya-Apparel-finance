@@ -5,7 +5,8 @@ import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+const dbId = firebaseConfig.firestoreDatabaseId || '(default)';
+export const db = getFirestore(app, dbId);
 export const googleProvider = new GoogleAuthProvider();
 
 // Request basic profile and email scopes
