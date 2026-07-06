@@ -214,6 +214,10 @@ export default function App() {
   const approvalRequestsRef = useRef<ApprovalRequest[]>(approvalRequests);
   const appUsersRef = useRef<AppUser[]>(appUsers);
 
+  // Keep track of whether the initial Firestore sync/migration has run to avoid overwriting user deletes
+  const hasInitializedTransactionsRef = useRef<boolean>(false);
+  const hasInitializedRequestsRef = useRef<boolean>(false);
+
   useEffect(() => {
     transactionsRef.current = transactions;
   }, [transactions]);
@@ -319,7 +323,11 @@ export default function App() {
 
   // Real-time synchronization with Firestore (PC, Mobile, and multi-browser sync)
   useEffect(() => {
-    if (!isLoggedIn) return;
+    if (!isLoggedIn) {
+      hasInitializedTransactionsRef.current = false;
+      hasInitializedRequestsRef.current = false;
+      return;
+    }
 
     // 1. Listen to transactions in real-time
     const unsubscribeTxs = onSnapshot(collection(db, 'transactions'), (snapshot) => {
@@ -338,7 +346,8 @@ export default function App() {
       });
 
       // Migration: If Firestore is empty but we have local data, migrate them to cloud
-      if (snapshot.empty && transactionsRef.current.length > 0) {
+      if (snapshot.empty && !hasInitializedTransactionsRef.current && transactionsRef.current.length > 0) {
+        hasInitializedTransactionsRef.current = true;
         transactionsRef.current.forEach(async (tx) => {
           try {
             await setDoc(doc(db, 'transactions', tx.id), tx);
@@ -348,6 +357,7 @@ export default function App() {
         });
         return;
       }
+      hasInitializedTransactionsRef.current = true;
 
       // Sort: date descending, then id descending to maintain stable order
       txList.sort((a, b) => {
@@ -385,7 +395,8 @@ export default function App() {
       });
 
       // Migration: If cloud is empty but we have local requests, migrate them
-      if (snapshot.empty && approvalRequestsRef.current.length > 0) {
+      if (snapshot.empty && !hasInitializedRequestsRef.current && approvalRequestsRef.current.length > 0) {
+        hasInitializedRequestsRef.current = true;
         approvalRequestsRef.current.forEach(async (req) => {
           try {
             await setDoc(doc(db, 'approval_requests', req.id), req);
@@ -395,6 +406,7 @@ export default function App() {
         });
         return;
       }
+      hasInitializedRequestsRef.current = true;
 
       // Sort requests by id descending (newest request first)
       reqList.sort((a, b) => b.id.localeCompare(a.id));
