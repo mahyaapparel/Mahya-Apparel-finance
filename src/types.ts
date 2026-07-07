@@ -8,6 +8,7 @@ export interface Transaction {
   type: TransactionType;
   amount: number;
   description: string;
+  buktiTransaksi?: string; // Base64 string for transaction proof / receipt image
 }
 
 export interface DivisionFinancials {
@@ -32,6 +33,7 @@ export interface ApprovalRequest {
     type: TransactionType;
     amount: number;
     description: string;
+    buktiTransaksi?: string;
   };
 }
 

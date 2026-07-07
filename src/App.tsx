@@ -40,7 +40,9 @@ import {
   Chrome,
   AlertTriangle,
   Wrench,
-  Clock
+  Clock,
+  Paperclip,
+  Upload
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Transaction, Division, TransactionType, ApprovalRequest, AppUser } from './types';
@@ -342,6 +344,7 @@ export default function App() {
           type: data.type,
           amount: data.amount,
           description: data.description,
+          buktiTransaksi: data.buktiTransaksi
         });
       });
 
@@ -485,8 +488,10 @@ export default function App() {
   const [inputType, setInputType] = useState<TransactionType>('Pemasukan');
   const [inputAmount, setInputAmount] = useState<string>('');
   const [inputDescription, setInputDescription] = useState<string>('');
+  const [inputBuktiTransaksi, setInputBuktiTransaksi] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [editingTransactionId, setEditingTransactionId] = useState<string | null>(null);
+  const [selectedBuktiUrl, setSelectedBuktiUrl] = useState<string | null>(null);
 
   // State Google Sheets URL & Modal
   const [googleSheetsUrl, setGoogleSheetsUrl] = useState<string>(() => {
@@ -571,6 +576,62 @@ export default function App() {
     );
   };
 
+  // Proses file bukti transaksi & kompresi ke Base64
+  const handleFileProcess = (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      triggerToast('Hanya dapat mengunggah file gambar (PNG/JPG/WEBP)!');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      triggerToast('Ukuran file gambar maksimal adalah 5MB!');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target?.result as string;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX_WIDTH = 800;
+        const MAX_HEIGHT = 800;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+        } else {
+          if (height > MAX_HEIGHT) {
+            width *= MAX_HEIGHT / height;
+            height = MAX_HEIGHT;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressed = canvas.toDataURL('image/jpeg', 0.7);
+          setInputBuktiTransaksi(compressed);
+          triggerToast('Gambar bukti berhasil diproses & dikompresi!');
+        } else {
+          setInputBuktiTransaksi(event.target?.result as string);
+          triggerToast('Gambar bukti berhasil dimuat!');
+        }
+      };
+      img.onerror = () => {
+        setInputBuktiTransaksi(event.target?.result as string);
+        triggerToast('Gambar bukti berhasil dimuat!');
+      };
+    };
+  };
+
   // Tambah / Edit Transaksi Baru
   const handleAddTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -600,7 +661,8 @@ export default function App() {
         division: inputDivision,
         type: inputDivision === 'Alat' ? ('Pemasukan' as TransactionType) : inputType,
         amount: nominal,
-        description: inputDescription.trim()
+        description: inputDescription.trim(),
+        buktiTransaksi: inputBuktiTransaksi
       };
 
       if (isOwner) {
@@ -625,6 +687,7 @@ export default function App() {
         setEditingTransactionId(null);
         setInputAmount('');
         setInputDescription('');
+        setInputBuktiTransaksi('');
         triggerToast('Berhasil mengubah transaksi!');
       } else {
         showConfirm(
@@ -662,6 +725,7 @@ export default function App() {
             setEditingTransactionId(null);
             setInputAmount('');
             setInputDescription('');
+            setInputBuktiTransaksi('');
             triggerToast('Pengajuan perubahan berhasil dikirim ke Owner untuk disetujui.');
           },
           false,
@@ -679,6 +743,7 @@ export default function App() {
       type: inputDivision === 'Alat' ? 'Pemasukan' : inputType,
       amount: nominal,
       description: inputDescription.trim(),
+      buktiTransaksi: inputBuktiTransaksi || undefined,
     };
 
     if (isLoggedIn) {
@@ -692,6 +757,7 @@ export default function App() {
     }
     setInputAmount('');
     setInputDescription('');
+    setInputBuktiTransaksi('');
     triggerToast(`Berhasil menyimpan transaksi ${newTx.type} ${newTx.division}!`);
   };
 
@@ -703,6 +769,7 @@ export default function App() {
     setInputType(tx.type);
     setInputAmount(tx.amount.toString());
     setInputDescription(tx.description);
+    setInputBuktiTransaksi(tx.buktiTransaksi || '');
     
     // Smooth scroll ke panel input form
     const formCard = document.getElementById('transaction-form-card');
@@ -720,6 +787,7 @@ export default function App() {
     setInputType('Pemasukan');
     setInputAmount('');
     setInputDescription('');
+    setInputBuktiTransaksi('');
     triggerToast('Edit dibatalkan.');
   };
 
@@ -2903,6 +2971,68 @@ else:
                     />
                   </div>
 
+                  {/* Bukti Transaksi (File Upload) */}
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider ml-1 mb-1 flex items-center gap-1.5">
+                      <Paperclip className="h-3.5 w-3.5 text-indigo-500 animate-pulse" />
+                      Bukti Transaksi (Opsional)
+                    </label>
+                    {inputBuktiTransaksi ? (
+                      <div className="relative border border-slate-200 rounded-xl p-2.5 bg-slate-50 flex items-center gap-3">
+                        <img 
+                          src={inputBuktiTransaksi} 
+                          alt="Bukti" 
+                          className="h-14 w-14 object-cover rounded-lg border border-slate-200 bg-white"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[11px] font-extrabold text-slate-700 truncate">Gambar Bukti Transaksi</p>
+                          <p className="text-[9.5px] font-medium text-emerald-600 flex items-center gap-1 mt-0.5">
+                            <CheckCircle className="h-3.5 w-3.5" /> Berhasil dimuat
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setInputBuktiTransaksi('')}
+                          className="p-1.5 hover:bg-slate-200 text-slate-500 hover:text-rose-600 rounded-lg transition-colors cursor-pointer"
+                          title="Hapus Bukti"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div 
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const file = e.dataTransfer.files?.[0];
+                          if (file) {
+                            handleFileProcess(file);
+                          }
+                        }}
+                        className="border-2 border-dashed border-slate-200 hover:border-indigo-400 rounded-xl p-4 bg-slate-50 hover:bg-indigo-50/10 text-center transition-all cursor-pointer relative group"
+                        onClick={() => document.getElementById('bukti-file-input')?.click()}
+                      >
+                        <input 
+                          id="bukti-file-input"
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              handleFileProcess(file);
+                            }
+                          }}
+                        />
+                        <Paperclip className="h-5 w-5 text-indigo-500 group-hover:scale-110 mx-auto mb-1.5 transition-transform" />
+                        <p className="text-[10px] font-bold text-slate-600">
+                          Drag & drop gambar bukti atau <span className="text-indigo-600 group-hover:underline">Pilih File</span>
+                        </p>
+                        <p className="text-[9px] text-slate-400 font-medium mt-0.5">PNG, JPG, WEBP (Max 5MB - otomatis kompresi)</p>
+                      </div>
+                    )}
+                  </div>
+
                   {/* Submit Button */}
                   <div className={editingTransactionId ? "flex gap-2" : ""}>
                     <button
@@ -3118,7 +3248,19 @@ else:
                                   {txK ? (
                                     <>
                                       <td className="px-2 py-2 border-r border-slate-100 text-xs text-slate-800 break-words min-w-[220px] max-w-[280px] font-medium">
-                                        <div className="text-xs text-slate-800 font-semibold">{txK.description}</div>
+                                        <div className="flex items-center justify-between gap-1.5">
+                                          <span className="text-xs text-slate-800 font-semibold">{txK.description}</span>
+                                          {txK.buktiTransaksi && (
+                                            <button
+                                              type="button"
+                                              onClick={() => setSelectedBuktiUrl(txK.buktiTransaksi!)}
+                                              className="text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 p-1 rounded-md transition-all inline-flex items-center justify-center shrink-0 cursor-pointer"
+                                              title="Lihat Bukti Transaksi"
+                                            >
+                                              <Paperclip className="h-3.5 w-3.5" />
+                                            </button>
+                                          )}
+                                        </div>
                                       </td>
                                       <td className="px-2 py-2 border-r border-slate-100 text-right text-xs font-mono">{formatTableCell(txK.type === 'Pemasukan' ? txK.amount : 0)}</td>
                                       <td className="px-2 py-2 border-r border-slate-100 text-right text-xs font-mono">{formatTableCell(txK.type === 'Pengeluaran' ? txK.amount : 0)}</td>
@@ -3156,7 +3298,19 @@ else:
                                   {txS ? (
                                     <>
                                       <td className="px-2 py-2 border-r border-slate-100 text-xs text-slate-800 break-words min-w-[220px] max-w-[280px] font-medium">
-                                        <div className="text-xs text-slate-800 font-semibold">{txS.description}</div>
+                                        <div className="flex items-center justify-between gap-1.5">
+                                          <span className="text-xs text-slate-800 font-semibold">{txS.description}</span>
+                                          {txS.buktiTransaksi && (
+                                            <button
+                                              type="button"
+                                              onClick={() => setSelectedBuktiUrl(txS.buktiTransaksi!)}
+                                              className="text-emerald-600 hover:text-emerald-800 hover:bg-emerald-50 p-1 rounded-md transition-all inline-flex items-center justify-center shrink-0 cursor-pointer"
+                                              title="Lihat Bukti Transaksi"
+                                            >
+                                              <Paperclip className="h-3.5 w-3.5" />
+                                            </button>
+                                          )}
+                                        </div>
                                       </td>
                                       <td className="px-2 py-2 border-r border-slate-100 text-right text-xs font-mono">{formatTableCell(txS.type === 'Pemasukan' ? txS.amount : 0)}</td>
                                       <td className="px-2 py-2 border-r border-slate-100 text-right text-xs font-mono">{formatTableCell(txS.type === 'Pengeluaran' ? txS.amount : 0)}</td>
@@ -3194,7 +3348,19 @@ else:
                                   {txA ? (
                                     <>
                                       <td className="px-2 py-2 border-r border-slate-100 text-xs text-slate-800 break-words min-w-[220px] max-w-[280px] font-medium">
-                                        <div className="text-xs text-slate-800 font-semibold">{txA.description}</div>
+                                        <div className="flex items-center justify-between gap-1.5">
+                                          <span className="text-xs text-slate-800 font-semibold">{txA.description}</span>
+                                          {txA.buktiTransaksi && (
+                                            <button
+                                              type="button"
+                                              onClick={() => setSelectedBuktiUrl(txA.buktiTransaksi!)}
+                                              className="text-amber-600 hover:text-amber-800 hover:bg-amber-50 p-1 rounded-md transition-all inline-flex items-center justify-center shrink-0 cursor-pointer"
+                                              title="Lihat Bukti Transaksi"
+                                            >
+                                              <Paperclip className="h-3.5 w-3.5" />
+                                            </button>
+                                          )}
+                                        </div>
                                       </td>
                                       <td className="px-2 py-2 border-r border-slate-100 text-right text-xs font-mono">{formatTableCell(txA.type === 'Pemasukan' ? txA.amount : 0)}</td>
                                       <td className="px-2 py-2 border-r border-slate-100 text-right text-xs font-mono">{formatTableCell(txA.type === 'Pengeluaran' ? txA.amount : 0)}</td>
@@ -3232,7 +3398,19 @@ else:
                                   {txE ? (
                                     <>
                                       <td className="px-2 py-2 border-r border-slate-100 text-xs text-slate-800 break-words min-w-[220px] max-w-[280px] font-medium">
-                                        <div className="text-xs text-slate-800 font-semibold">{txE.description}</div>
+                                        <div className="flex items-center justify-between gap-1.5">
+                                          <span className="text-xs text-slate-800 font-semibold">{txE.description}</span>
+                                          {txE.buktiTransaksi && (
+                                            <button
+                                              type="button"
+                                              onClick={() => setSelectedBuktiUrl(txE.buktiTransaksi!)}
+                                              className="text-rose-600 hover:text-rose-800 hover:bg-rose-50 p-1 rounded-md transition-all inline-flex items-center justify-center shrink-0 cursor-pointer"
+                                              title="Lihat Bukti Transaksi"
+                                            >
+                                              <Paperclip className="h-3.5 w-3.5" />
+                                            </button>
+                                          )}
+                                        </div>
                                       </td>
                                       <td className="px-2 py-2 bg-rose-50/10 border-r border-slate-100 text-right font-mono font-medium text-slate-700 text-xs">{formatTableCell(txE.amount)}</td>
                                       <td className="px-2 py-2 border-r border-slate-200 text-center whitespace-nowrap bg-rose-50/10">
@@ -3414,17 +3592,53 @@ else:
                             </span>
                           </td>
                           <td className="py-3 max-w-xs break-words font-semibold text-slate-800">
-                            {req.requestType === 'Edit' && req.newData ? (
-                              <div>
-                                <span className="line-through text-slate-400 text-[11px] block">{req.transactionDesc}</span>
-                                <span className="text-indigo-600 text-xs font-bold mt-0.5 flex items-center gap-1">
-                                  <span className="text-[9px] bg-indigo-100 text-indigo-800 font-black px-1 rounded">Baru:</span>
-                                  {req.newData.description}
-                                </span>
-                              </div>
-                            ) : (
-                              req.transactionDesc
-                            )}
+                            {(() => {
+                              const origTx = transactions.find(t => t.id === req.transactionId);
+                              const hasOrigProof = origTx?.buktiTransaksi;
+                              const hasNewProof = req.newData?.buktiTransaksi;
+
+                              return (
+                                <div>
+                                  {req.requestType === 'Edit' && req.newData ? (
+                                    <div>
+                                      <span className="line-through text-slate-400 text-[11px] block">{req.transactionDesc}</span>
+                                      <span className="text-indigo-600 text-xs font-bold mt-0.5 flex items-center gap-1">
+                                        <span className="text-[9px] bg-indigo-100 text-indigo-800 font-black px-1 rounded">Baru:</span>
+                                        {req.newData.description}
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <span>{req.transactionDesc}</span>
+                                  )}
+
+                                  {/* Tampilkan link bukti transaksi jika ada */}
+                                  <div className="flex flex-wrap gap-1.5 mt-1.5">
+                                    {hasOrigProof && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setSelectedBuktiUrl(origTx.buktiTransaksi!)}
+                                        className="text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-200 px-1.5 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-all inline-flex"
+                                        title="Lihat bukti transaksi asli"
+                                      >
+                                        <Paperclip className="h-3 w-3 text-slate-400" />
+                                        <span>Bukti {req.requestType === 'Edit' ? 'Lama' : 'Asli'}</span>
+                                      </button>
+                                    )}
+                                    {hasNewProof && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setSelectedBuktiUrl(req.newData!.buktiTransaksi!)}
+                                        className="text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 px-1.5 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-all inline-flex"
+                                        title="Lihat bukti transaksi baru"
+                                      >
+                                        <Paperclip className="h-3 w-3 text-indigo-500" />
+                                        <span>Bukti Baru</span>
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })()}
                           </td>
                           <td className="py-3 text-right font-black font-mono text-slate-900">
                             {req.requestType === 'Edit' && req.newData ? (
@@ -3893,6 +4107,79 @@ else:
           <span>{isCloudConnected ? 'Cloud Terhubung (Real-time)' : 'Koneksi Cloud Terputus (Mode Lokal)'}</span>
         </p>
       </footer>
+
+      {/* Lightbox Modal Bukti Transaksi */}
+      <AnimatePresence>
+        {selectedBuktiUrl && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setSelectedBuktiUrl(null)}
+            className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs z-50 flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 15 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl border border-slate-200"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-slate-50">
+                <div className="flex items-center gap-2">
+                  <div className="h-7 w-7 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                    <Paperclip className="h-4 w-4" />
+                  </div>
+                  <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                    BUKTI TRANSAKSI MAHYA
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedBuktiUrl(null)}
+                  className="p-1.5 hover:bg-slate-200 text-slate-500 hover:text-slate-800 rounded-lg transition-colors cursor-pointer text-xs font-bold"
+                >
+                  TUTUP
+                </button>
+              </div>
+
+              {/* Image Preview Container */}
+              <div className="p-5 flex justify-center bg-slate-950 border-b border-slate-100 max-h-[400px] overflow-auto">
+                <img
+                  src={selectedBuktiUrl}
+                  alt="Bukti Transaksi"
+                  className="max-w-full max-h-[350px] object-contain rounded-lg shadow-md"
+                />
+              </div>
+
+              {/* Controls */}
+              <div className="px-5 py-3.5 bg-slate-50 flex justify-between items-center gap-4">
+                <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+                  MAHYA APPAREL FINANCE
+                </p>
+                <div className="flex gap-2">
+                  <a
+                    href={selectedBuktiUrl}
+                    download="bukti-transaksi-mahya.jpg"
+                    className="bg-slate-950 hover:bg-slate-800 text-white px-3 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Unduh Bukti
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedBuktiUrl(null)}
+                    className="border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                  >
+                    Tutup
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
     </div>
   );
