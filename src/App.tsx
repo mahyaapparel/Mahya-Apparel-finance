@@ -353,7 +353,11 @@ export default function App() {
         hasInitializedTransactionsRef.current = true;
         transactionsRef.current.forEach(async (tx) => {
           try {
-            await setDoc(doc(db, 'transactions', tx.id), tx);
+            const cleanTx = { ...tx };
+            if (cleanTx.buktiTransaksi === undefined) {
+              delete cleanTx.buktiTransaksi;
+            }
+            await setDoc(doc(db, 'transactions', tx.id), cleanTx);
           } catch (err) {
             console.error('Gagal migrasi transaksi ke cloud:', err);
           }
@@ -656,14 +660,17 @@ export default function App() {
         return;
       }
 
-      const editedData = {
+      const editedData: any = {
         date: inputDate,
         division: inputDivision,
         type: inputDivision === 'Alat' ? ('Pemasukan' as TransactionType) : inputType,
         amount: nominal,
-        description: inputDescription.trim(),
-        buktiTransaksi: inputBuktiTransaksi
+        description: inputDescription.trim()
       };
+
+      if (inputBuktiTransaksi) {
+        editedData.buktiTransaksi = inputBuktiTransaksi;
+      }
 
       if (isOwner) {
         if (isLoggedIn) {
@@ -743,8 +750,11 @@ export default function App() {
       type: inputDivision === 'Alat' ? 'Pemasukan' : inputType,
       amount: nominal,
       description: inputDescription.trim(),
-      buktiTransaksi: inputBuktiTransaksi || undefined,
     };
+
+    if (inputBuktiTransaksi) {
+      newTx.buktiTransaksi = inputBuktiTransaksi;
+    }
 
     if (isLoggedIn) {
       try {
