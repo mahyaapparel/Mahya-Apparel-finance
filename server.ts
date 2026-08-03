@@ -182,6 +182,35 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
+// API Webhook to receive payment transactions from Invoice App
+app.post("/api/webhooks/invoice-payment", (req, res) => {
+  const { date, division, type, amount, description, invoiceNumber, paymentType } = req.body;
+  
+  if (!amount) {
+    return res.status(400).json({ error: "Kolom amount wajib diisi." });
+  }
+
+  const validDivision = ["Konveksi", "Sablon", "Aksesori", "Alat"].includes(division) 
+    ? division 
+    : "Konveksi";
+
+  const newTransaction = {
+    id: `tx-inv-${Date.now()}`,
+    date: date || new Date().toISOString().split('T')[0],
+    division: validDivision,
+    type: type || "Pemasukan",
+    amount: Number(amount),
+    description: description || `${paymentType || 'Pembayaran'} Invoice #${invoiceNumber || ''}`,
+    createdAt: new Date().toISOString()
+  };
+
+  res.json({
+    success: true,
+    message: "Transaksi invoice berhasil diproses untuk Dashboard Keuangan.",
+    transaction: newTransaction
+  });
+});
+
 // Configure Vite middleware in development or serve built files in production
 async function bootstrap() {
   if (process.env.NODE_ENV !== "production") {
