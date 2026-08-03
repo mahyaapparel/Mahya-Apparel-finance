@@ -1420,16 +1420,10 @@ export default function App() {
 
   // --- LOGIK EKSPOR EXCEL & GOOGLE SHEETS ---
 
-  // 1. Ekspor ke Excel asli (.xlsx) menggunakan SheetJS
-  const exportToExcelXLSX = () => {
-    // We group by date just like the live table
-    const uniqueDates = Array.from(new Set(filteredTransactions.map(t => t.date as string)))
+  // Helper untuk membuat Worksheet Excel bertema Monitor Arus Kas dari sekelompok transaksi
+  const buildTransactionWorksheet = (txList: Transaction[]) => {
+    const uniqueDates = Array.from(new Set(txList.map(t => t.date as string)))
       .sort((a, b) => (b as string).localeCompare(a as string)) as string[]; // Newest first
-
-    if (uniqueDates.length === 0) {
-      triggerToast('Tidak ada data transaksi ditemukan untuk diekspor.');
-      return;
-    }
 
     const aoa: any[][] = [];
 
@@ -1454,24 +1448,19 @@ export default function App() {
     const merges: any[] = [];
     
     // Header merges:
-    // 1. Tanggal (Merge Row 0, Col 0 with Row 1, Col 0)
     merges.push({ s: { r: 0, c: 0 }, e: { r: 1, c: 0 } });
-    // 2. Konveksi (Merge Row 0, Col 1 to Row 0, Col 4)
     merges.push({ s: { r: 0, c: 1 }, e: { r: 0, c: 4 } });
-    // 3. Sablon (Merge Row 0, Col 5 to Row 0, Col 8)
     merges.push({ s: { r: 0, c: 5 }, e: { r: 0, c: 8 } });
-    // 4. Aksesori (Merge Row 0, Col 9 to Row 0, Col 12)
     merges.push({ s: { r: 0, c: 9 }, e: { r: 0, c: 12 } });
-    // 5. Alat (Merge Row 0, Col 13 to Row 0, Col 14)
     merges.push({ s: { r: 0, c: 13 }, e: { r: 0, c: 14 } });
 
     let currentRowIndex = 2;
 
     uniqueDates.forEach((date) => {
-      const dateKonveksi = filteredTransactions.filter(t => t.date === date && t.division === 'Konveksi');
-      const dateSablon = filteredTransactions.filter(t => t.date === date && t.division === 'Sablon');
-      const dateAksesori = filteredTransactions.filter(t => t.date === date && t.division === 'Aksesori');
-      const dateAlat = filteredTransactions.filter(t => t.date === date && t.division === 'Alat');
+      const dateKonveksi = txList.filter(t => t.date === date && t.division === 'Konveksi');
+      const dateSablon = txList.filter(t => t.date === date && t.division === 'Sablon');
+      const dateAksesori = txList.filter(t => t.date === date && t.division === 'Aksesori');
+      const dateAlat = txList.filter(t => t.date === date && t.division === 'Alat');
 
       const dateMaxRows = Math.max(
         dateKonveksi.length,
@@ -1482,7 +1471,6 @@ export default function App() {
 
       if (dateMaxRows === 0) return;
 
-      // Date Merge: Merge Col 0 from currentRowIndex to (currentRowIndex + dateMaxRows - 1)
       if (dateMaxRows > 1) {
         merges.push({
           s: { r: currentRowIndex, c: 0 },
@@ -1497,8 +1485,6 @@ export default function App() {
         const txE = dateAlat[j];
 
         const row: any[] = [];
-        
-        // Col 0: Tanggal (only on the first row of this date group)
         row[0] = j === 0 ? date : '';
 
         // Konveksi
@@ -1508,10 +1494,7 @@ export default function App() {
           row[3] = txK.type === 'Pengeluaran' ? txK.amount : 0;
           row[4] = txK.type === 'Pemasukan' ? txK.amount : -txK.amount;
         } else {
-          row[1] = '';
-          row[2] = '';
-          row[3] = '';
-          row[4] = '';
+          row[1] = ''; row[2] = ''; row[3] = ''; row[4] = '';
         }
 
         // Sablon
@@ -1521,10 +1504,7 @@ export default function App() {
           row[7] = txS.type === 'Pengeluaran' ? txS.amount : 0;
           row[8] = txS.type === 'Pemasukan' ? txS.amount : -txS.amount;
         } else {
-          row[5] = '';
-          row[6] = '';
-          row[7] = '';
-          row[8] = '';
+          row[5] = ''; row[6] = ''; row[7] = ''; row[8] = '';
         }
 
         // Aksesori
@@ -1534,10 +1514,7 @@ export default function App() {
           row[11] = txA.type === 'Pengeluaran' ? txA.amount : 0;
           row[12] = txA.type === 'Pemasukan' ? txA.amount : -txA.amount;
         } else {
-          row[9] = '';
-          row[10] = '';
-          row[11] = '';
-          row[12] = '';
+          row[9] = ''; row[10] = ''; row[11] = ''; row[12] = '';
         }
 
         // Alat
@@ -1545,8 +1522,7 @@ export default function App() {
           row[13] = txE.description;
           row[14] = txE.amount;
         } else {
-          row[13] = '';
-          row[14] = '';
+          row[13] = ''; row[14] = '';
         }
 
         aoa.push(row);
@@ -1555,43 +1531,43 @@ export default function App() {
       currentRowIndex += dateMaxRows;
     });
 
-    // Calculate totals for the footer
-    const exportKonveksiTxs = filteredTransactions.filter(t => t.division === 'Konveksi');
+    // Hitung total untuk footer
+    const exportKonveksiTxs = txList.filter(t => t.division === 'Konveksi');
     const exportKonveksiIn = exportKonveksiTxs.filter(t => t.type === 'Pemasukan').reduce((sum, t) => sum + t.amount, 0);
     const exportKonveksiOut = exportKonveksiTxs.filter(t => t.type === 'Pengeluaran').reduce((sum, t) => sum + t.amount, 0);
     const exportKonveksiProfit = exportKonveksiIn - exportKonveksiOut;
 
-    const exportSablonTxs = filteredTransactions.filter(t => t.division === 'Sablon');
+    const exportSablonTxs = txList.filter(t => t.division === 'Sablon');
     const exportSablonIn = exportSablonTxs.filter(t => t.type === 'Pemasukan').reduce((sum, t) => sum + t.amount, 0);
     const exportSablonOut = exportSablonTxs.filter(t => t.type === 'Pengeluaran').reduce((sum, t) => sum + t.amount, 0);
     const exportSablonProfit = exportSablonIn - exportSablonOut;
 
-    const exportAksesoriTxs = filteredTransactions.filter(t => t.division === 'Aksesori');
+    const exportAksesoriTxs = txList.filter(t => t.division === 'Aksesori');
     const exportAksesoriIn = exportAksesoriTxs.filter(t => t.type === 'Pemasukan').reduce((sum, t) => sum + t.amount, 0);
     const exportAksesoriOut = exportAksesoriTxs.filter(t => t.type === 'Pengeluaran').reduce((sum, t) => sum + t.amount, 0);
     const exportAksesoriProfit = exportAksesoriIn - exportAksesoriOut;
 
-    const exportAlatTxs = filteredTransactions.filter(t => t.division === 'Alat');
+    const exportAlatTxs = txList.filter(t => t.division === 'Alat');
     const exportAlatTotalValue = exportAlatTxs.reduce((sum, t) => sum + t.amount, 0);
 
     const totalRow: any[] = [];
     totalRow[0] = 'TOTAL';
-    totalRow[1] = ''; // Keterangan spacer for Konveksi
+    totalRow[1] = '';
     totalRow[2] = exportKonveksiIn;
     totalRow[3] = exportKonveksiOut;
     totalRow[4] = exportKonveksiProfit;
 
-    totalRow[5] = ''; // Keterangan spacer for Sablon
+    totalRow[5] = '';
     totalRow[6] = exportSablonIn;
     totalRow[7] = exportSablonOut;
     totalRow[8] = exportSablonProfit;
 
-    totalRow[9] = ''; // Keterangan spacer for Aksesori
+    totalRow[9] = '';
     totalRow[10] = exportAksesoriIn;
     totalRow[11] = exportAksesoriOut;
     totalRow[12] = exportAksesoriProfit;
 
-    totalRow[13] = ''; // Keterangan spacer for Alat
+    totalRow[13] = '';
     totalRow[14] = exportAlatTotalValue;
 
     aoa.push(totalRow);
@@ -1599,7 +1575,7 @@ export default function App() {
     const ws = XLSX.utils.aoa_to_sheet(aoa);
     ws['!merges'] = merges;
 
-    // Apply styles to all cells in the sheet
+    // Terapkan style cell
     const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:O2');
     
     for (let r = range.s.r; r <= range.e.r; r++) {
@@ -1611,7 +1587,6 @@ export default function App() {
         
         const cell = ws[cellRef];
         
-        // Base Style
         const cellStyle: any = {
           font: { name: 'Segoe UI', sz: 10, color: { rgb: '1E293B' } },
           alignment: { vertical: 'center' },
@@ -1624,48 +1599,45 @@ export default function App() {
         };
 
         if (r === 0) {
-          // Row 0: Category Headers
           cellStyle.font = { name: 'Segoe UI', sz: 11, bold: true, color: { rgb: 'FFFFFF' } };
           cellStyle.alignment = { vertical: 'center', horizontal: 'center' };
           
           if (c === 0) {
-            cellStyle.fill = { fgColor: { rgb: '1E293B' } }; // Tanggal (Slate-800)
+            cellStyle.fill = { fgColor: { rgb: '1E293B' } }; // Tanggal
           } else if (c >= 1 && c <= 4) {
-            cellStyle.fill = { fgColor: { rgb: '312E81' } }; // Konveksi (Indigo-900)
+            cellStyle.fill = { fgColor: { rgb: '312E81' } }; // Konveksi
           } else if (c >= 5 && c <= 8) {
-            cellStyle.fill = { fgColor: { rgb: '064E3B' } }; // Sablon (Emerald-900)
+            cellStyle.fill = { fgColor: { rgb: '064E3B' } }; // Sablon
           } else if (c >= 9 && c <= 12) {
-            cellStyle.fill = { fgColor: { rgb: '78350F' } }; // Aksesori (Amber-900)
+            cellStyle.fill = { fgColor: { rgb: '78350F' } }; // Aksesori
           } else if (c >= 13 && c <= 14) {
-            cellStyle.fill = { fgColor: { rgb: '0C4A6E' } }; // Alat (Sky-900)
+            cellStyle.fill = { fgColor: { rgb: '0C4A6E' } }; // Alat
           }
         }
         else if (r === 1) {
-          // Row 1: Sub Headers
           cellStyle.font = { name: 'Segoe UI', sz: 9.5, bold: true };
           cellStyle.alignment = { vertical: 'center', horizontal: 'center' };
           
           if (c === 0) {
-            cellStyle.fill = { fgColor: { rgb: '1E293B' } }; // Tanggal (merged from Row 0)
+            cellStyle.fill = { fgColor: { rgb: '1E293B' } };
             cellStyle.font.color = { rgb: 'FFFFFF' };
           } else if (c >= 1 && c <= 4) {
-            cellStyle.fill = { fgColor: { rgb: 'EEF2FF' } }; // Light Indigo
+            cellStyle.fill = { fgColor: { rgb: 'EEF2FF' } };
             cellStyle.font.color = { rgb: '312E81' };
           } else if (c >= 5 && c <= 8) {
-            cellStyle.fill = { fgColor: { rgb: 'ECFDF5' } }; // Light Emerald
+            cellStyle.fill = { fgColor: { rgb: 'ECFDF5' } };
             cellStyle.font.color = { rgb: '064E3B' };
           } else if (c >= 9 && c <= 12) {
-            cellStyle.fill = { fgColor: { rgb: 'FFFBEB' } }; // Light Amber
+            cellStyle.fill = { fgColor: { rgb: 'FFFBEB' } };
             cellStyle.font.color = { rgb: '78350F' };
           } else if (c >= 13 && c <= 14) {
-            cellStyle.fill = { fgColor: { rgb: 'F0F9FF' } }; // Light Sky
+            cellStyle.fill = { fgColor: { rgb: 'F0F9FF' } };
             cellStyle.font.color = { rgb: '0C4A6E' };
           }
         }
         else if (r === range.e.r) {
-          // Row Last: TOTAL Footer Row
           cellStyle.font = { name: 'Segoe UI', sz: 10, bold: true, color: { rgb: 'FFFFFF' } };
-          cellStyle.fill = { fgColor: { rgb: '1E293B' } }; // Slate-800
+          cellStyle.fill = { fgColor: { rgb: '1E293B' } };
           cellStyle.border = {
             top: { style: 'medium', color: { rgb: '0F172A' } },
             bottom: { style: 'medium', color: { rgb: '0F172A' } },
@@ -1685,15 +1657,9 @@ export default function App() {
           }
         }
         else {
-          // Data Rows: Zebra striping for improved readability
           const isOdd = (r % 2 === 1);
-          if (isOdd) {
-            cellStyle.fill = { fgColor: { rgb: 'F8FAFC' } }; // Slate-50 background
-          } else {
-            cellStyle.fill = { fgColor: { rgb: 'FFFFFF' } };
-          }
+          cellStyle.fill = { fgColor: { rgb: isOdd ? 'F8FAFC' : 'FFFFFF' } };
 
-          // Alignments & coloring specific to data columns
           if (c === 0) {
             cellStyle.alignment = { vertical: 'center', horizontal: 'center' };
           } else if (c === 1 || c === 5 || c === 9 || c === 13) {
@@ -1703,14 +1669,13 @@ export default function App() {
             if (typeof cell.v === 'number') {
               cell.z = '#,##0';
               
-              // Color 'Laba' columns text green for profit, red for loss
               const isProfitCol = (c === 4 || c === 8 || c === 12);
               if (isProfitCol) {
                 if (cell.v < 0) {
-                  cellStyle.font.color = { rgb: 'DC2626' }; // Red-600
+                  cellStyle.font.color = { rgb: 'DC2626' };
                   cellStyle.font.bold = true;
                 } else if (cell.v > 0) {
-                  cellStyle.font.color = { rgb: '16A34A' }; // Green-600
+                  cellStyle.font.color = { rgb: '16A34A' };
                   cellStyle.font.bold = true;
                 }
               }
@@ -1722,7 +1687,6 @@ export default function App() {
       }
     }
 
-    // Set column widths to make it super clean and neat
     const colWidths = [
       { wch: 14 },  // Tanggal
       { wch: 28 },  // Keterangan Konveksi
@@ -1742,11 +1706,73 @@ export default function App() {
     ];
     ws['!cols'] = colWidths;
 
+    return ws;
+  };
+
+  // 1. Ekspor ke Excel asli (.xlsx) menggunakan SheetJS (dengan Sheet terpisah per Bulan)
+  const exportToExcelXLSX = () => {
+    if (filteredTransactions.length === 0) {
+      triggerToast('Tidak ada data transaksi ditemukan untuk diekspor.');
+      return;
+    }
+
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Laporan Keuangan');
+
+    // Kelompokkan transaksi berdasarkan bulan (YYYY-MM)
+    const monthGroups: { [key: string]: Transaction[] } = {};
+    filteredTransactions.forEach((tx) => {
+      const mKey = tx.date && typeof tx.date === 'string' && tx.date.length >= 7 
+        ? tx.date.substring(0, 7) 
+        : 'Lainnya';
+      if (!monthGroups[mKey]) {
+        monthGroups[mKey] = [];
+      }
+      monthGroups[mKey].push(tx);
+    });
+
+    // Urutkan kunci bulan terbaru lebih dulu
+    const sortedMonthKeys = Object.keys(monthGroups).sort((a, b) => b.localeCompare(a));
+    const usedSheetNames = new Set<string>();
+
+    // Buat Sheet per Bulan
+    sortedMonthKeys.forEach((mKey) => {
+      const monthTxs = monthGroups[mKey];
+      let sheetTitle = 'Semua';
+      if (mKey !== 'Lainnya') {
+        const [yearStr, monthStr] = mKey.split('-');
+        const monthIdx = parseInt(monthStr, 10) - 1;
+        const monthName = MONTH_NAMES_ID[monthIdx] || monthStr;
+        sheetTitle = `${monthName} ${yearStr}`;
+      } else {
+        sheetTitle = 'Lainnya';
+      }
+
+      // Pastikan nama sheet unik dan max 31 karakter
+      let safeName = sheetTitle.replace(/[\/\\?\*:]/g, ' ').trim().substring(0, 31);
+      let counter = 1;
+      while (usedSheetNames.has(safeName)) {
+        const suffix = ` (${counter})`;
+        safeName = sheetTitle.substring(0, 31 - suffix.length) + suffix;
+        counter++;
+      }
+      usedSheetNames.add(safeName);
+
+      const ws = buildTransactionWorksheet(monthTxs);
+      XLSX.utils.book_append_sheet(wb, ws, safeName);
+    });
+
+    // Tambahkan sheet gabungan "Semua Transaksi" jika terdapat lebih dari 1 bulan
+    if (sortedMonthKeys.length > 1) {
+      let allName = 'Semua Transaksi';
+      if (usedSheetNames.has(allName)) {
+        allName = 'Ringkasan Semua';
+      }
+      const allWs = buildTransactionWorksheet(filteredTransactions);
+      XLSX.utils.book_append_sheet(wb, allWs, allName);
+    }
 
     XLSX.writeFile(wb, `Laporan_Keuangan_Mahya_Apparel_${new Date().toISOString().split('T')[0]}.xlsx`);
-    triggerToast('Laporan Keuangan Excel (.xlsx) berhasil diunduh dengan warna & tata letak Monitor Arus!');
+    triggerToast(`Laporan Keuangan Excel (.xlsx) berhasil diunduh (${sortedMonthKeys.length} Sheet Bulanan)!`);
   };
 
   // Ekspor Laporan Berkala (Bulanan, 3 Bulanan, atau Tahunan) ke Excel asli (.xlsx)
@@ -2437,7 +2463,7 @@ else:
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wide">1. Unduh Berkas Excel (.xlsx) Asli</h3>
-                      <p className="text-[10px] text-slate-400 leading-relaxed mt-0.5">Mengunduh berkas Excel (.xlsx) asli secara langsung dengan format rapi, lebar kolom otomatis, dan angka yang siap dihitung (bukan teks).</p>
+                      <p className="text-[10px] text-slate-400 leading-relaxed mt-0.5">Mengunduh berkas Excel (.xlsx) asli secara langsung dengan sheet terpisah untuk setiap bulan, format rapi, lebar kolom otomatis, dan angka yang siap dihitung.</p>
                     </div>
                     <button
                       onClick={exportToExcelXLSX}
