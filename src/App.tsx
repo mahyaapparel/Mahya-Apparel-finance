@@ -42,7 +42,12 @@ import {
   Wrench,
   Clock,
   Paperclip,
-  Upload
+  Upload,
+  Receipt,
+  ShoppingCart,
+  Printer,
+  X,
+  ArrowRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Transaction, Division, TransactionType, ApprovalRequest, AppUser } from './types';
@@ -514,10 +519,297 @@ export default function App() {
   const [copied, setCopied] = useState<boolean>(false);
   const [showToast, setShowToast] = useState<string | null>(null);
 
+  // State Kasir Kaos Polos (Inter-Divisi: Sablon -> Konveksi)
+  const [isKasirModalOpen, setIsKasirModalOpen] = useState<boolean>(false);
+  const [kasirDate, setKasirDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [kasirQty, setKasirQty] = useState<string>('0');
+  const [kasirPrice, setKasirPrice] = useState<string>('35000');
+  const [kasirDescription, setKasirDescription] = useState<string>('Kaos Polos Cotton Combed 30s');
+  const [kasirBukti, setKasirBukti] = useState<string>('');
+  const [kasirInvoiceNo, setKasirInvoiceNo] = useState<string>(`INV-KP-${Date.now().toString().slice(-6)}`);
+  
+  // State Ukuran, Tier Harga & Lengan Kaos Polos (Dewasa & Anak-Anak)
+  const [kasirCategoryTab, setKasirCategoryTab] = useState<'dewasa' | 'anak'>('dewasa');
+  const [kasirTierPrices, setKasirTierPrices] = useState({
+    dewasaStandar: 35000,          // XS, S, M, L, XL (Pendek)
+    dewasaJumbo: 40000,            // XXL, 3XL (Pendek)
+    dewasaBigSize: 45000,          // Big Size: 4XL, 5XL, 6XL (Pendek)
+    anak: 28000,                   // Anak-Anak (Pendek)
+    lenganPanjangSurcharge: 5000,  // Tambahan Lengan Panjang per pcs
+  });
+
+  const [kasirSizes, setKasirSizes] = useState<{
+    dewasa: Record<string, { pendek: number; panjang: number }>;
+    anak: Record<string, { pendek: number; panjang: number }>;
+  }>({
+    dewasa: {
+      'XS': { pendek: 0, panjang: 0 },
+      'S': { pendek: 0, panjang: 0 },
+      'M': { pendek: 0, panjang: 0 },
+      'L': { pendek: 0, panjang: 0 },
+      'XL': { pendek: 0, panjang: 0 },
+      'XXL': { pendek: 0, panjang: 0 },
+      '3XL': { pendek: 0, panjang: 0 },
+      '4XL': { pendek: 0, panjang: 0 },
+      '5XL': { pendek: 0, panjang: 0 },
+      '6XL': { pendek: 0, panjang: 0 },
+    },
+    anak: {
+      'Size 2 (XS)': { pendek: 0, panjang: 0 },
+      'Size 4 (S)': { pendek: 0, panjang: 0 },
+      'Size 6 (M)': { pendek: 0, panjang: 0 },
+      'Size 8 (L)': { pendek: 0, panjang: 0 },
+      'Size 10 (XL)': { pendek: 0, panjang: 0 },
+      'Size 12 (XXL)': { pendek: 0, panjang: 0 },
+    },
+  });
+
+  const [invoiceToPrint, setInvoiceToPrint] = useState<{
+    invoiceNo: string;
+    date: string;
+    qty: number;
+    price: number;
+    total: number;
+    description: string;
+    bukti?: string;
+    lineItems?: Array<{ label: string; qty: number; unitPrice: number; subtotal: number }>;
+  } | null>(null);
+
+  // Helper kalkulasi detail itemized harga & jumlah kaos
+  const calculateKasirBreakdown = (
+    sizes = kasirSizes,
+    prices = kasirTierPrices
+  ) => {
+    let totalPcs = 0;
+    let totalNominal = 0;
+    const lineItems: Array<{ label: string; qty: number; unitPrice: number; subtotal: number }> = [];
+
+    // 1. Dewasa
+    Object.entries(sizes.dewasa).forEach(([sz, item]) => {
+      const szUpper = sz.toUpperCase();
+      const isBigSize = ['4XL', '5XL', '6XL', '7XL', '8XL'].includes(szUpper);
+      const isJumbo = ['XXL', '3XL'].includes(szUpper);
+
+      const basePrice = isBigSize
+        ? prices.dewasaBigSize
+        : isJumbo
+        ? prices.dewasaJumbo
+        : prices.dewasaStandar;
+
+      if (item.pendek > 0) {
+        const sub = item.pendek * basePrice;
+        totalPcs += item.pendek;
+        totalNominal += sub;
+        lineItems.push({
+          label: `Dewasa ${sz} (Lengan Pendek)`,
+          qty: item.pendek,
+          unitPrice: basePrice,
+          subtotal: sub,
+        });
+      }
+
+      if (item.panjang > 0) {
+        const pPrice = basePrice + prices.lenganPanjangSurcharge;
+        const sub = item.panjang * pPrice;
+        totalPcs += item.panjang;
+        totalNominal += sub;
+        lineItems.push({
+          label: `Dewasa ${sz} (Lengan Panjang)`,
+          qty: item.panjang,
+          unitPrice: pPrice,
+          subtotal: sub,
+        });
+      }
+    });
+
+    // 2. Anak-Anak
+    Object.entries(sizes.anak).forEach(([sz, item]) => {
+      const basePrice = prices.anak;
+
+      if (item.pendek > 0) {
+        const sub = item.pendek * basePrice;
+        totalPcs += item.pendek;
+        totalNominal += sub;
+        lineItems.push({
+          label: `Anak ${sz} (Lengan Pendek)`,
+          qty: item.pendek,
+          unitPrice: basePrice,
+          subtotal: sub,
+        });
+      }
+
+      if (item.panjang > 0) {
+        const pPrice = basePrice + prices.lenganPanjangSurcharge;
+        const sub = item.panjang * pPrice;
+        totalPcs += item.panjang;
+        totalNominal += sub;
+        lineItems.push({
+          label: `Anak ${sz} (Lengan Panjang)`,
+          qty: item.panjang,
+          unitPrice: pPrice,
+          subtotal: sub,
+        });
+      }
+    });
+
+    return { totalPcs, totalNominal, lineItems };
+  };
+
+  const handleResetKasirSizes = () => {
+    const emptySizes = {
+      dewasa: {
+        'XS': { pendek: 0, panjang: 0 },
+        'S': { pendek: 0, panjang: 0 },
+        'M': { pendek: 0, panjang: 0 },
+        'L': { pendek: 0, panjang: 0 },
+        'XL': { pendek: 0, panjang: 0 },
+        'XXL': { pendek: 0, panjang: 0 },
+        '3XL': { pendek: 0, panjang: 0 },
+        '4XL': { pendek: 0, panjang: 0 },
+        '5XL': { pendek: 0, panjang: 0 },
+        '6XL': { pendek: 0, panjang: 0 },
+      },
+      anak: {
+        'Size 2 (XS)': { pendek: 0, panjang: 0 },
+        'Size 4 (S)': { pendek: 0, panjang: 0 },
+        'Size 6 (M)': { pendek: 0, panjang: 0 },
+        'Size 8 (L)': { pendek: 0, panjang: 0 },
+        'Size 10 (XL)': { pendek: 0, panjang: 0 },
+        'Size 12 (XXL)': { pendek: 0, panjang: 0 },
+      },
+    };
+    setKasirSizes(emptySizes);
+    setKasirQty('0');
+    setKasirPrice('35000');
+    setKasirDescription('Kaos Polos Cotton Combed 30s');
+  };
+
+  const syncKasirStateWithSizesAndPrices = (
+    updatedSizes = kasirSizes,
+    updatedPrices = kasirTierPrices
+  ) => {
+    const breakdown = calculateKasirBreakdown(updatedSizes, updatedPrices);
+    if (breakdown.totalPcs > 0) {
+      setKasirQty(breakdown.totalPcs.toString());
+      setKasirPrice(Math.round(breakdown.totalNominal / breakdown.totalPcs).toString());
+      const descItems = breakdown.lineItems.map(i => `${i.label} x${i.qty}`).join('; ');
+      setKasirDescription(`Kaos Polos Cotton Combed 30s (${descItems})`);
+    }
+  };
+
+  const handleKasirTierPriceChange = (field: keyof typeof kasirTierPrices, value: number) => {
+    const val = Math.max(0, isNaN(value) ? 0 : value);
+    const updatedPrices = { ...kasirTierPrices, [field]: val };
+    setKasirTierPrices(updatedPrices);
+    syncKasirStateWithSizesAndPrices(kasirSizes, updatedPrices);
+  };
+
+  const handleKasirSizeChange = (
+    cat: 'dewasa' | 'anak',
+    sizeName: string,
+    type: 'pendek' | 'panjang',
+    val: number
+  ) => {
+    const nextVal = Math.max(0, isNaN(val) ? 0 : val);
+    setKasirSizes(prev => {
+      const updatedCat = {
+        ...prev[cat],
+        [sizeName]: {
+          ...prev[cat][sizeName],
+          [type]: nextVal,
+        },
+      };
+      const updatedSizes = { ...prev, [cat]: updatedCat };
+      syncKasirStateWithSizesAndPrices(updatedSizes, kasirTierPrices);
+      return updatedSizes;
+    });
+  };
+
   // Helper Toast
   const triggerToast = (msg: string) => {
     setShowToast(msg);
     setTimeout(() => setShowToast(null), 3000);
+  };
+
+  // Handler Kasir Kaos Polos (Sablon Beli Kaos Polos ke Konveksi -> Auto Pemasukan Konveksi & Pengeluaran Sablon)
+  const handleProcessKasirKaosPolos = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const breakdown = calculateKasirBreakdown();
+    const isItemized = breakdown.lineItems.length > 0;
+
+    const qtyNum = isItemized ? breakdown.totalPcs : (parseInt(kasirQty, 10) || 0);
+    const totalNominal = isItemized ? breakdown.totalNominal : (qtyNum * (parseFloat(kasirPrice) || 0));
+    const priceNum = qtyNum > 0 ? Math.round(totalNominal / qtyNum) : 0;
+
+    if (qtyNum <= 0 || priceNum <= 0 || totalNominal <= 0) {
+      triggerToast('Pilih minimal 1 rincian ukuran kaos polos atau isi jumlah dan harga valid!');
+      return;
+    }
+
+    const invNo = kasirInvoiceNo.trim() || `INV-KP-${Date.now().toString().slice(-6)}`;
+    const detailNote = kasirDescription.trim() || 'Kaos Polos Cotton Combed 30s';
+    const nowStamp = Date.now();
+
+    // 1. Transaction Pemasukan Divisi Konveksi
+    const txKonveksi: Transaction = {
+      id: `tx-${nowStamp}-konveksi`,
+      date: kasirDate,
+      division: 'Konveksi',
+      type: 'Pemasukan',
+      amount: totalNominal,
+      description: `[Invoice #${invNo}] Penjualan ${qtyNum} Pcs Kaos Polos ke Divisi Sablon (${detailNote})`,
+    };
+    if (kasirBukti) {
+      txKonveksi.buktiTransaksi = kasirBukti;
+    }
+
+    // 2. Transaction Pengeluaran Divisi Sablon
+    const txSablon: Transaction = {
+      id: `tx-${nowStamp + 1}-sablon`,
+      date: kasirDate,
+      division: 'Sablon',
+      type: 'Pengeluaran',
+      amount: totalNominal,
+      description: `[Invoice #${invNo}] Pembelian ${qtyNum} Pcs Kaos Polos dari Divisi Konveksi (${detailNote})`,
+    };
+    if (kasirBukti) {
+      txSablon.buktiTransaksi = kasirBukti;
+    }
+
+    if (isLoggedIn) {
+      try {
+        await setDoc(doc(db, 'transactions', txKonveksi.id), txKonveksi);
+        await setDoc(doc(db, 'transactions', txSablon.id), txSablon);
+      } catch (err) {
+        console.error('Gagal menyimpan transaksi kasir ke cloud:', err);
+      }
+    } else {
+      setTransactions(prev => [txKonveksi, txSablon, ...prev]);
+    }
+
+    const invData = {
+      invoiceNo: invNo,
+      date: kasirDate,
+      qty: qtyNum,
+      price: priceNum,
+      total: totalNominal,
+      description: detailNote,
+      bukti: kasirBukti || undefined,
+      lineItems: breakdown.lineItems,
+    };
+
+    setInvoiceToPrint(invData);
+    setIsKasirModalOpen(false);
+
+    // Reset Form
+    setKasirQty('0');
+    setKasirPrice('35000');
+    setKasirDescription('Kaos Polos Cotton Combed 30s');
+    setKasirBukti('');
+    handleResetKasirSizes();
+    setKasirInvoiceNo(`INV-KP-${(nowStamp + 10).toString().slice(-6)}`);
+
+    triggerToast(`🎉 [Invoice #${invNo}] Berhasil! Otomatis dicatat: Pemasukan Konveksi & Pengeluaran Sablon (${formatCurrency(totalNominal)})`);
   };
 
   // Handler Login
@@ -2872,6 +3164,33 @@ else:
                   )}
                 </div>
 
+                {/* Banner Tombol Invoice / Kasir Kaos Polos (Sablon -> Konveksi Inter-Divisi) */}
+                <div className="mb-4 bg-slate-900 text-white rounded-xl p-3 shadow-xs border border-slate-800 flex items-center justify-between gap-2.5">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="p-2 bg-amber-400/20 text-amber-300 rounded-lg shrink-0">
+                      <ShoppingCart className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[11px] font-bold text-white">Kasir Kaos Polos</span>
+                        <span className="bg-amber-400/20 text-amber-300 border border-amber-400/30 text-[8.5px] px-1.5 py-0.2 rounded font-mono font-extrabold uppercase">Sablon ➔ Konveksi</span>
+                      </div>
+                      <p className="text-[9.5px] text-slate-300 truncate mt-0.5">Otomatis Masuk Pemasukan Konveksi & Pengeluaran Sablon</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setKasirInvoiceNo(`INV-KP-${Date.now().toString().slice(-6)}`);
+                      setIsKasirModalOpen(true);
+                    }}
+                    className="px-2.5 py-1.5 bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-[10.5px] rounded-lg shadow-sm transition-all flex items-center gap-1 shrink-0 cursor-pointer"
+                  >
+                    <Receipt className="h-3.5 w-3.5" />
+                    <span>Buka Kasir</span>
+                  </button>
+                </div>
+
                 <form onSubmit={handleAddTransaction} className="space-y-4">
                   
                   {/* Tanggal */}
@@ -3142,6 +3461,19 @@ else:
                         className="w-full bg-white border border-slate-200 rounded-xl pl-8.5 pr-3 py-1.5 text-xs font-medium focus:outline-hidden focus:border-indigo-500 transition-all text-slate-800"
                       />
                     </div>
+
+                    {/* Tombol Kasir Kaos Polos (Sablon -> Konveksi) */}
+                    <button
+                      onClick={() => {
+                        setKasirInvoiceNo(`INV-KP-${Date.now().toString().slice(-6)}`);
+                        setIsKasirModalOpen(true);
+                      }}
+                      className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black p-1.5 px-3 rounded-xl text-xs flex items-center gap-1.5 cursor-pointer shadow-xs shrink-0 transition-all border border-amber-300/60"
+                      title="Kasir / Invoice Kaos Polos (Pembelian Sablon ke Konveksi)"
+                    >
+                      <Receipt className="h-4 w-4 text-slate-950" />
+                      <span>Kasir Kaos Polos</span>
+                    </button>
 
                     {/* Button for Periodical Reports */}
                     <button
@@ -3495,21 +3827,21 @@ else:
                           <td className="bg-slate-50 border-r border-slate-100 min-w-[220px] max-w-[280px]"></td>
                           <td className="px-2 py-3 text-right bg-indigo-50/30 border-r border-slate-100 text-indigo-900 font-mono font-bold">{formatCurrency(konveksiFin.income, false)}</td>
                           <td className="px-2 py-3 text-right bg-indigo-50/30 border-r border-slate-100 text-rose-700 font-mono font-bold">{formatCurrency(konveksiFin.expense, false)}</td>
-                          <td className="px-2 py-3 text-right bg-indigo-100/60 border-r border-slate-100 font-black font-mono text-indigo-950">{formatCurrency(konveksiFin.profit)}</td>
+                          <td className={`px-2 py-3 text-right bg-indigo-100/60 border-r border-slate-100 font-black font-mono ${konveksiFin.profit < 0 ? 'text-rose-600' : 'text-indigo-950'}`}>{formatCurrency(konveksiFin.profit)}</td>
                           <td className="bg-slate-50 border-r border-slate-200"></td>
 
                           {/* Sablon */}
                           <td className="bg-slate-50 border-r border-slate-100 min-w-[220px] max-w-[280px]"></td>
                           <td className="px-2 py-3 text-right bg-emerald-50/30 border-r border-slate-100 text-emerald-900 font-mono font-bold">{formatCurrency(sablonFin.income, false)}</td>
                           <td className="px-2 py-3 text-right bg-emerald-50/30 border-r border-slate-100 text-rose-700 font-mono font-bold">{formatCurrency(sablonFin.expense, false)}</td>
-                          <td className="px-2 py-3 text-right bg-emerald-100/60 border-r border-slate-100 font-black font-mono text-emerald-950">{formatCurrency(sablonFin.profit)}</td>
+                          <td className={`px-2 py-3 text-right bg-emerald-100/60 border-r border-slate-100 font-black font-mono ${sablonFin.profit < 0 ? 'text-rose-600' : 'text-emerald-950'}`}>{formatCurrency(sablonFin.profit)}</td>
                           <td className="bg-slate-50 border-r border-slate-200"></td>
 
                           {/* Aksesori */}
                           <td className="bg-slate-50 border-r border-slate-100 min-w-[220px] max-w-[280px]"></td>
                           <td className="px-2 py-3 text-right bg-amber-50/30 border-r border-slate-100 text-amber-900 font-mono font-bold">{formatCurrency(aksesoriFin.income, false)}</td>
                           <td className="px-2 py-3 text-right bg-amber-50/30 border-r border-slate-100 text-rose-700 font-mono font-bold">{formatCurrency(aksesoriFin.expense, false)}</td>
-                          <td className="px-2 py-3 text-right bg-amber-100/60 border-r border-slate-100 font-black font-mono text-amber-950">{formatCurrency(aksesoriFin.profit)}</td>
+                          <td className={`px-2 py-3 text-right bg-amber-100/60 border-r border-slate-100 font-black font-mono ${aksesoriFin.profit < 0 ? 'text-rose-600' : 'text-amber-950'}`}>{formatCurrency(aksesoriFin.profit)}</td>
                           <td className="bg-slate-50 border-r border-slate-200"></td>
 
                           {/* Alat */}
@@ -3957,17 +4289,17 @@ else:
                       {/* Konveksi */}
                       <td className="px-2 py-3 text-right bg-indigo-50/30 border-r border-slate-100 text-indigo-900 font-mono font-bold">{formatCurrency(getActiveReportRows().reduce((sum, r) => sum + r.konveksiIn, 0), false)}</td>
                       <td className="px-2 py-3 text-right bg-indigo-50/30 border-r border-slate-100 text-rose-700 font-mono font-bold">{formatCurrency(getActiveReportRows().reduce((sum, r) => sum + r.konveksiOut, 0), false)}</td>
-                      <td className="px-2 py-3 text-right bg-indigo-100/60 border-r border-slate-200 font-black font-mono text-indigo-950">{formatCurrency(getActiveReportRows().reduce((sum, r) => sum + r.konveksiProfit, 0))}</td>
+                      <td className={`px-2 py-3 text-right bg-indigo-100/60 border-r border-slate-200 font-black font-mono ${getActiveReportRows().reduce((sum, r) => sum + r.konveksiProfit, 0) < 0 ? 'text-rose-600' : 'text-indigo-950'}`}>{formatCurrency(getActiveReportRows().reduce((sum, r) => sum + r.konveksiProfit, 0))}</td>
 
                       {/* Sablon */}
                       <td className="px-2 py-3 text-right bg-emerald-50/30 border-r border-slate-100 text-emerald-900 font-mono font-bold">{formatCurrency(getActiveReportRows().reduce((sum, r) => sum + r.sablonIn, 0), false)}</td>
                       <td className="px-2 py-3 text-right bg-emerald-50/30 border-r border-slate-100 text-rose-700 font-mono font-bold">{formatCurrency(getActiveReportRows().reduce((sum, r) => sum + r.sablonOut, 0), false)}</td>
-                      <td className="px-2 py-3 text-right bg-emerald-100/60 border-r border-slate-200 font-black font-mono text-emerald-950">{formatCurrency(getActiveReportRows().reduce((sum, r) => sum + r.sablonProfit, 0))}</td>
+                      <td className={`px-2 py-3 text-right bg-emerald-100/60 border-r border-slate-200 font-black font-mono ${getActiveReportRows().reduce((sum, r) => sum + r.sablonProfit, 0) < 0 ? 'text-rose-600' : 'text-emerald-950'}`}>{formatCurrency(getActiveReportRows().reduce((sum, r) => sum + r.sablonProfit, 0))}</td>
 
                       {/* Aksesori */}
                       <td className="px-2 py-3 text-right bg-amber-50/30 border-r border-slate-100 text-amber-900 font-mono font-bold">{formatCurrency(getActiveReportRows().reduce((sum, r) => sum + r.aksesoriIn, 0), false)}</td>
                       <td className="px-2 py-3 text-right bg-amber-50/30 border-r border-slate-100 text-rose-700 font-mono font-bold">{formatCurrency(getActiveReportRows().reduce((sum, r) => sum + r.aksesoriOut, 0), false)}</td>
-                      <td className="px-2 py-3 text-right bg-amber-100/60 border-r border-slate-200 font-black font-mono text-amber-950">{formatCurrency(getActiveReportRows().reduce((sum, r) => sum + r.aksesoriProfit, 0))}</td>
+                      <td className={`px-2 py-3 text-right bg-amber-100/60 border-r border-slate-200 font-black font-mono ${getActiveReportRows().reduce((sum, r) => sum + r.aksesoriProfit, 0) < 0 ? 'text-rose-600' : 'text-amber-950'}`}>{formatCurrency(getActiveReportRows().reduce((sum, r) => sum + r.aksesoriProfit, 0))}</td>
 
                       {/* Alat */}
                       <td className="px-2 py-3 text-right bg-rose-100/60 border-r border-slate-200 font-black font-mono text-rose-950">{formatCurrency(getActiveReportRows().reduce((sum, r) => sum + r.alatValue, 0))}</td>
@@ -3975,7 +4307,7 @@ else:
                       {/* Total Konsolidasian */}
                       <td className="px-2 py-3 text-right bg-slate-800 text-slate-100 border-r border-slate-700 font-mono font-bold">{formatCurrency(getActiveReportRows().reduce((sum, r) => sum + r.totalIn, 0), false)}</td>
                       <td className="px-2 py-3 text-right bg-slate-800 text-rose-400 border-r border-slate-700 font-mono font-bold">{formatCurrency(getActiveReportRows().reduce((sum, r) => sum + r.totalOut, 0), false)}</td>
-                      <td className="px-2 py-3 text-right bg-slate-900 text-emerald-400 font-black font-mono">{formatCurrency(getActiveReportRows().reduce((sum, r) => sum + r.totalProfit, 0))}</td>
+                      <td className={`px-2 py-3 text-right bg-slate-900 font-black font-mono ${getActiveReportRows().reduce((sum, r) => sum + r.totalProfit, 0) < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>{formatCurrency(getActiveReportRows().reduce((sum, r) => sum + r.totalProfit, 0))}</td>
                     </tr>
                   </tfoot>
                 )}
@@ -4214,6 +4546,633 @@ else:
               </div>
             </motion.div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* MODAL KASIR / INVOICE KAOS POLOS (INTER-DIVISI) */}
+      <AnimatePresence>
+        {isKasirModalOpen && (
+          <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 flex items-center justify-center p-4 overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="max-w-xl w-full bg-white rounded-3xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col my-auto relative"
+            >
+              {/* Header Modal */}
+              <div className="bg-slate-900 text-white p-5 flex items-center justify-between border-b border-slate-800">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-amber-400/20 text-amber-300 rounded-xl border border-amber-400/30">
+                    <ShoppingCart className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-sm font-extrabold text-white uppercase tracking-wider">Kasir / Invoice Kaos Polos</h2>
+                      <span className="bg-amber-400 text-slate-950 text-[9px] font-black px-2 py-0.5 rounded-full font-mono">
+                        INTER-DIVISI
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-300 mt-0.5">Pembelian Kaos Polos oleh Divisi Sablon dari Divisi Konveksi</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsKasirModalOpen(false)}
+                  className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-xl transition-all cursor-pointer"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              {/* Banner Info Alur Otomatis */}
+              <div className="bg-indigo-50 border-b border-indigo-100 p-4">
+                <div className="flex items-center justify-between text-xs font-bold text-slate-800 gap-2 bg-white p-3 rounded-2xl border border-indigo-100 shadow-2xs">
+                  <div className="flex items-center gap-2 text-rose-700">
+                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping" />
+                    <span>Divisi Sablon</span>
+                    <span className="text-[10px] bg-rose-100 text-rose-800 px-1.5 py-0.5 rounded font-mono font-extrabold">Pengeluaran 🔴</span>
+                  </div>
+                  <ArrowRight className="h-4 w-4 text-slate-400 shrink-0" />
+                  <div className="flex items-center gap-2 text-emerald-700">
+                    <span>Divisi Konveksi</span>
+                    <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-mono font-extrabold">Pemasukan 🟢</span>
+                  </div>
+                </div>
+                <p className="text-[10px] text-indigo-900/70 font-medium text-center mt-2">
+                  ✨ Transaksi ini akan mencatat <strong>Pemasukan Konveksi</strong> &amp; <strong>Pengeluaran Sablon</strong> secara otomatis.
+                </p>
+              </div>
+
+              {/* Form Input Kasir */}
+              <form onSubmit={handleProcessKasirKaosPolos} className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* No Invoice */}
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block ml-1 mb-1">
+                      No. Invoice / Referensi
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={kasirInvoiceNo}
+                      onChange={(e) => setKasirInvoiceNo(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono font-bold focus:outline-hidden focus:border-indigo-500 focus:bg-white transition-all text-slate-800"
+                    />
+                  </div>
+
+                  {/* Tanggal */}
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block ml-1 mb-1">
+                      Tanggal Transaksi
+                    </label>
+                    <input
+                      type="date"
+                      required
+                      value={kasirDate}
+                      onChange={(e) => setKasirDate(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-hidden focus:border-indigo-500 focus:bg-white transition-all text-slate-800"
+                    />
+                  </div>
+                </div>
+
+                {/* Rincian Ukuran & Lengan (Dewasa & Anak-Anak) */}
+                <div className="border border-slate-200 rounded-2xl bg-slate-50/70 p-3.5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-black text-slate-800 uppercase tracking-wide">Rincian Ukuran &amp; Lengan</span>
+                      <span className="text-[9.5px] bg-indigo-100 text-indigo-700 font-bold px-1.5 py-0.2 rounded font-mono">
+                        Pendek &amp; Panjang
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleResetKasirSizes}
+                      className="text-[9.5px] font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-2 py-0.5 rounded-md transition-all cursor-pointer"
+                    >
+                      Reset Inputs
+                    </button>
+                  </div>
+
+                  {/* Category Tabs: Dewasa vs Anak-Anak */}
+                  <div className="flex bg-slate-200 p-1 rounded-xl gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setKasirCategoryTab('dewasa')}
+                      className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                        kasirCategoryTab === 'dewasa'
+                          ? 'bg-slate-900 text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <span>👕 Dewasa</span>
+                      <span className="text-[9px] font-mono bg-white/20 px-1.5 py-0.2 rounded-full font-extrabold">
+                        {Object.values(kasirSizes.dewasa).reduce((sum, item) => sum + (item.pendek || 0) + (item.panjang || 0), 0)} pcs
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setKasirCategoryTab('anak')}
+                      className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                        kasirCategoryTab === 'anak'
+                          ? 'bg-slate-900 text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <span>👶 Anak-Anak</span>
+                      <span className="text-[9px] font-mono bg-white/20 px-1.5 py-0.2 rounded-full font-extrabold">
+                        {Object.values(kasirSizes.anak).reduce((sum, item) => sum + (item.pendek || 0) + (item.panjang || 0), 0)} pcs
+                      </span>
+                    </button>
+                  </div>
+
+                  {/* Grid Size Inputs */}
+                  <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                    {kasirCategoryTab === 'dewasa' ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {Object.keys(kasirSizes.dewasa).map((size) => {
+                          const item = kasirSizes.dewasa[size];
+                          const subtotal = (item.pendek || 0) + (item.panjang || 0);
+                          return (
+                            <div key={size} className="bg-white border border-slate-200 rounded-xl p-2.5 shadow-2xs flex flex-col gap-1.5">
+                              <div className="flex items-center justify-between border-b border-slate-100 pb-1">
+                                <span className="text-xs font-black text-slate-800 font-mono">Ukuran {size}</span>
+                                {subtotal > 0 && (
+                                  <span className="text-[9px] font-mono font-black bg-indigo-50 text-indigo-700 px-1.5 py-0.2 rounded">
+                                    Subtotal: {subtotal} pcs
+                                  </span>
+                                )}
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                {/* Lengan Pendek */}
+                                <div>
+                                  <label className="text-[9px] font-bold text-slate-500 block mb-0.5">Lengan Pendek</label>
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleKasirSizeChange('dewasa', size, 'pendek', (item.pendek || 0) - 1)}
+                                      className="w-5 h-5 flex items-center justify-center bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-xs font-bold cursor-pointer shrink-0"
+                                    >-</button>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={item.pendek || ''}
+                                      onChange={(e) => handleKasirSizeChange('dewasa', size, 'pendek', parseInt(e.target.value, 10))}
+                                      placeholder="0"
+                                      className="w-full text-center bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-xs font-bold font-mono focus:outline-hidden focus:bg-white focus:border-indigo-500"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => handleKasirSizeChange('dewasa', size, 'pendek', (item.pendek || 0) + 1)}
+                                      className="w-5 h-5 flex items-center justify-center bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded text-xs font-bold cursor-pointer shrink-0"
+                                    >+</button>
+                                  </div>
+                                </div>
+
+                                {/* Lengan Panjang */}
+                                <div>
+                                  <label className="text-[9px] font-bold text-slate-500 block mb-0.5">Lengan Panjang</label>
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleKasirSizeChange('dewasa', size, 'panjang', (item.panjang || 0) - 1)}
+                                      className="w-5 h-5 flex items-center justify-center bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-xs font-bold cursor-pointer shrink-0"
+                                    >-</button>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={item.panjang || ''}
+                                      onChange={(e) => handleKasirSizeChange('dewasa', size, 'panjang', parseInt(e.target.value, 10))}
+                                      placeholder="0"
+                                      className="w-full text-center bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-xs font-bold font-mono focus:outline-hidden focus:bg-white focus:border-indigo-500"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => handleKasirSizeChange('dewasa', size, 'panjang', (item.panjang || 0) + 1)}
+                                      className="w-5 h-5 flex items-center justify-center bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded text-xs font-bold cursor-pointer shrink-0"
+                                    >+</button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {Object.keys(kasirSizes.anak).map((size) => {
+                          const item = kasirSizes.anak[size];
+                          const subtotal = (item.pendek || 0) + (item.panjang || 0);
+                          return (
+                            <div key={size} className="bg-white border border-slate-200 rounded-xl p-2.5 shadow-2xs flex flex-col gap-1.5">
+                              <div className="flex items-center justify-between border-b border-slate-100 pb-1">
+                                <span className="text-xs font-black text-slate-800 font-mono">Ukuran {size}</span>
+                                {subtotal > 0 && (
+                                  <span className="text-[9px] font-mono font-black bg-indigo-50 text-indigo-700 px-1.5 py-0.2 rounded">
+                                    Subtotal: {subtotal} pcs
+                                  </span>
+                                )}
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                {/* Lengan Pendek */}
+                                <div>
+                                  <label className="text-[9px] font-bold text-slate-500 block mb-0.5">Lengan Pendek</label>
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleKasirSizeChange('anak', size, 'pendek', (item.pendek || 0) - 1)}
+                                      className="w-5 h-5 flex items-center justify-center bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-xs font-bold cursor-pointer shrink-0"
+                                    >-</button>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={item.pendek || ''}
+                                      onChange={(e) => handleKasirSizeChange('anak', size, 'pendek', parseInt(e.target.value, 10))}
+                                      placeholder="0"
+                                      className="w-full text-center bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-xs font-bold font-mono focus:outline-hidden focus:bg-white focus:border-indigo-500"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => handleKasirSizeChange('anak', size, 'pendek', (item.pendek || 0) + 1)}
+                                      className="w-5 h-5 flex items-center justify-center bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded text-xs font-bold cursor-pointer shrink-0"
+                                    >+</button>
+                                  </div>
+                                </div>
+
+                                {/* Lengan Panjang */}
+                                <div>
+                                  <label className="text-[9px] font-bold text-slate-500 block mb-0.5">Lengan Panjang</label>
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleKasirSizeChange('anak', size, 'panjang', (item.panjang || 0) - 1)}
+                                      className="w-5 h-5 flex items-center justify-center bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-xs font-bold cursor-pointer shrink-0"
+                                    >-</button>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      value={item.panjang || ''}
+                                      onChange={(e) => handleKasirSizeChange('anak', size, 'panjang', parseInt(e.target.value, 10))}
+                                      placeholder="0"
+                                      className="w-full text-center bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-xs font-bold font-mono focus:outline-hidden focus:bg-white focus:border-indigo-500"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => handleKasirSizeChange('anak', size, 'panjang', (item.panjang || 0) + 1)}
+                                      className="w-5 h-5 flex items-center justify-center bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded text-xs font-bold cursor-pointer shrink-0"
+                                    >+</button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Pengaturan Harga per Kategori & Lengan */}
+                <div className="border border-indigo-100 rounded-2xl bg-indigo-50/50 p-3.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-indigo-950 uppercase tracking-wide flex items-center gap-1.5">
+                      ⚙️ Pengaturan Daftar Harga Kaos Polos
+                    </span>
+                    <span className="text-[9px] font-mono font-bold bg-indigo-200/80 text-indigo-900 px-2 py-0.5 rounded-full">
+                      Otomatis Dihitung
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+                    {/* Dewasa Standar */}
+                    <div className="bg-white p-2 rounded-xl border border-indigo-100 shadow-2xs">
+                      <label className="text-[9px] font-bold text-slate-600 block mb-1">Dewasa XS-XL (Pdk)</label>
+                      <div className="relative">
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-[10px] font-bold">Rp</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="500"
+                          value={kasirTierPrices.dewasaStandar || ''}
+                          onChange={(e) => handleKasirTierPriceChange('dewasaStandar', parseInt(e.target.value, 10))}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-6 pr-1.5 py-1 text-xs font-mono font-bold focus:outline-hidden focus:bg-white focus:border-indigo-500 text-slate-800"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Dewasa Jumbo (XXL - 3XL) */}
+                    <div className="bg-white p-2 rounded-xl border border-indigo-100 shadow-2xs">
+                      <label className="text-[9px] font-bold text-amber-700 block mb-1">Jumbo XXL-3XL (Pdk)</label>
+                      <div className="relative">
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-[10px] font-bold">Rp</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="500"
+                          value={kasirTierPrices.dewasaJumbo || ''}
+                          onChange={(e) => handleKasirTierPriceChange('dewasaJumbo', parseInt(e.target.value, 10))}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-6 pr-1.5 py-1 text-xs font-mono font-bold focus:outline-hidden focus:bg-white focus:border-indigo-500 text-slate-800"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Big Size 4XL - 6XL */}
+                    <div className="bg-white p-2 rounded-xl border border-purple-100 shadow-2xs">
+                      <label className="text-[9px] font-bold text-purple-700 block mb-1">Big Size 4XL+ (Pdk)</label>
+                      <div className="relative">
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-[10px] font-bold">Rp</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="500"
+                          value={kasirTierPrices.dewasaBigSize || ''}
+                          onChange={(e) => handleKasirTierPriceChange('dewasaBigSize', parseInt(e.target.value, 10))}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-6 pr-1.5 py-1 text-xs font-mono font-bold focus:outline-hidden focus:bg-white focus:border-indigo-500 text-slate-800"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Anak-Anak */}
+                    <div className="bg-white p-2 rounded-xl border border-indigo-100 shadow-2xs">
+                      <label className="text-[9px] font-bold text-emerald-700 block mb-1">Anak-Anak (Pdk)</label>
+                      <div className="relative">
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-[10px] font-bold">Rp</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="500"
+                          value={kasirTierPrices.anak || ''}
+                          onChange={(e) => handleKasirTierPriceChange('anak', parseInt(e.target.value, 10))}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-6 pr-1.5 py-1 text-xs font-mono font-bold focus:outline-hidden focus:bg-white focus:border-indigo-500 text-slate-800"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Biaya Tambahan Lengan Panjang */}
+                    <div className="bg-white p-2 rounded-xl border border-indigo-100 shadow-2xs">
+                      <label className="text-[9px] font-bold text-indigo-700 block mb-1">+ Lengan Panjang</label>
+                      <div className="relative">
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 text-[10px] font-bold">Rp</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="500"
+                          value={kasirTierPrices.lenganPanjangSurcharge || ''}
+                          onChange={(e) => handleKasirTierPriceChange('lenganPanjangSurcharge', parseInt(e.target.value, 10))}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-6 pr-1.5 py-1 text-xs font-mono font-bold focus:outline-hidden focus:bg-white focus:border-indigo-500 text-slate-800"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Ringkasan Total & Live Calculation */}
+                {(() => {
+                  const bd = calculateKasirBreakdown();
+                  const totalPcs = bd.lineItems.length > 0 ? bd.totalPcs : (parseInt(kasirQty, 10) || 0);
+                  const totalNominal = bd.lineItems.length > 0 ? bd.totalNominal : (totalPcs * (parseFloat(kasirPrice) || 0));
+                  return (
+                    <div className="bg-slate-900 text-white rounded-2xl p-4 border border-slate-800 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider block">
+                            Total Nilai Invoice Inter-Divisi
+                          </span>
+                          <p className="text-[11px] text-slate-400 font-medium mt-0.5 font-mono">
+                            {totalPcs} Pcs Kaos Total
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-xl sm:text-2xl font-black font-mono text-amber-300">
+                            {formatCurrency(totalNominal)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {bd.lineItems.length > 0 && (
+                        <div className="pt-2 border-t border-slate-800/80 text-[10px] space-y-1 max-h-28 overflow-y-auto pr-1">
+                          {bd.lineItems.map((item, idx) => (
+                            <div key={idx} className="flex items-center justify-between text-slate-300 font-mono">
+                              <span className="truncate pr-2">• {item.label} ({item.qty} pcs × {formatCurrency(item.unitPrice, false)})</span>
+                              <span className="font-bold text-amber-300/90 shrink-0">{formatCurrency(item.subtotal)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Rincian Keterangan */}
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block ml-1 mb-1">
+                    Detail / Rincian Kaos Polos
+                  </label>
+                  <textarea
+                    required
+                    rows={2}
+                    placeholder="Contoh: Kaos Polos Cotton Combed 30s Hitam (S:5, M:10, L:10, XL:5)"
+                    value={kasirDescription}
+                    onChange={(e) => setKasirDescription(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold focus:outline-hidden focus:border-indigo-500 focus:bg-white transition-all text-slate-800 resize-none"
+                  />
+                </div>
+
+                {/* Bukti Transaksi / Resi (Upload) */}
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block ml-1 mb-1">
+                    Upload Bukti / Nota Pembelian (Opsional)
+                  </label>
+                  {kasirBukti ? (
+                    <div className="relative border border-slate-200 rounded-xl p-2 bg-slate-50 flex items-center gap-3">
+                      <img src={kasirBukti} alt="Bukti" className="h-12 w-12 object-cover rounded-lg border border-slate-200 bg-white" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[11px] font-extrabold text-slate-700 truncate">Bukti Nota Terlampir</p>
+                        <p className="text-[9.5px] text-emerald-600 font-bold flex items-center gap-1"><CheckCircle className="h-3 w-3" /> Berhasil dimuat</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setKasirBukti('')}
+                        className="p-1.5 hover:bg-slate-200 text-slate-500 hover:text-rose-600 rounded-lg cursor-pointer"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const file = e.dataTransfer.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onload = (ev) => setKasirBukti(ev.target?.result as string);
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                      className="border-2 border-dashed border-slate-200 hover:border-indigo-400 rounded-xl p-3 bg-slate-50 hover:bg-indigo-50/20 text-center transition-all cursor-pointer"
+                      onClick={() => document.getElementById('kasir-bukti-input')?.click()}
+                    >
+                      <input
+                        id="kasir-bukti-input"
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const reader = new FileReader();
+                            reader.onload = (ev) => setKasirBukti(ev.target?.result as string);
+                            reader.readAsDataURL(file);
+                          }
+                        }}
+                      />
+                      <Paperclip className="h-4 w-4 text-slate-400 mx-auto mb-1" />
+                      <p className="text-[10px] font-bold text-slate-600">Klik / Seret Gambar Nota Kasir</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Submit Actions */}
+                <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setIsKasirModalOpen(false)}
+                    className="px-4 py-2.5 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-600 transition-all cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2.5 rounded-xl text-xs font-black bg-emerald-600 hover:bg-emerald-500 text-white transition-all cursor-pointer shadow-md flex items-center gap-1.5"
+                  >
+                    <CheckCircle className="h-4 w-4" />
+                    <span>Proses &amp; Catat Transaksi Dual</span>
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* MODAL PRINT PREVIEW NOTA / INVOICE KAOS POLOS */}
+      <AnimatePresence>
+        {invoiceToPrint && (
+          <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs z-50 flex items-center justify-center p-4 overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="max-w-md w-full bg-white rounded-3xl border border-slate-200 shadow-2xl p-6 relative overflow-hidden my-auto"
+            >
+              {/* Header Invoice */}
+              <div className="flex items-start justify-between border-b-2 border-slate-900 pb-4 mb-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 bg-slate-900 text-white rounded-lg">
+                      <Receipt className="h-4 w-4" />
+                    </div>
+                    <span className="text-base font-black tracking-tight text-slate-900">MAHYA APPAREL</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-1">
+                    Nota Pembelian Kaos Polos Inter-Divisi
+                  </p>
+                </div>
+                <div className="text-right">
+                  <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 text-[9px] font-black px-2 py-0.5 rounded font-mono block">
+                    LUNAS
+                  </span>
+                  <span className="text-[10px] font-mono font-bold text-slate-500 mt-1 block">
+                    #{invoiceToPrint.invoiceNo}
+                  </span>
+                </div>
+              </div>
+
+              {/* Detail Pihak Transaksi */}
+              <div className="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-3 rounded-2xl border border-slate-200 mb-4 font-medium">
+                <div>
+                  <span className="text-[9px] text-slate-400 font-bold uppercase block">Penjual (Pemasukan 🟢)</span>
+                  <strong className="text-indigo-900 font-bold">Divisi Konveksi</strong>
+                </div>
+                <div>
+                  <span className="text-[9px] text-slate-400 font-bold uppercase block">Pembeli (Pengeluaran 🔴)</span>
+                  <strong className="text-rose-900 font-bold">Divisi Sablon</strong>
+                </div>
+                <div className="col-span-2 pt-1.5 border-t border-slate-200 text-[10px] text-slate-500 flex justify-between">
+                  <span>Tanggal: <strong>{invoiceToPrint.date}</strong></span>
+                  <span>Otomatis Masuk Ledger</span>
+                </div>
+              </div>
+
+              {/* Tabel Item Rincian */}
+              <div className="border border-slate-200 rounded-2xl overflow-hidden mb-4">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-slate-900 text-white text-[10px] uppercase font-bold">
+                    <tr>
+                      <th className="p-2.5 pl-3">Item / Rincian</th>
+                      <th className="p-2.5 text-center">Qty</th>
+                      <th className="p-2.5 text-right pr-3">Subtotal</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-medium">
+                    {invoiceToPrint.lineItems && invoiceToPrint.lineItems.length > 0 ? (
+                      invoiceToPrint.lineItems.map((item, idx) => (
+                        <tr key={idx}>
+                          <td className="p-2.5 pl-3">
+                            <div className="font-bold text-slate-800 text-xs">{item.label}</div>
+                            <div className="text-[9.5px] text-slate-400 font-mono">@ {formatCurrency(item.unitPrice)} / Pcs</div>
+                          </td>
+                          <td className="p-2.5 text-center font-bold text-slate-700 font-mono text-xs">
+                            {item.qty} Pcs
+                          </td>
+                          <td className="p-2.5 text-right pr-3 font-bold font-mono text-slate-900 text-xs">
+                            {formatCurrency(item.subtotal)}
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td className="p-2.5 pl-3">
+                          <div className="font-bold text-slate-800">Kaos Polos</div>
+                          <div className="text-[10px] text-slate-500 leading-tight">{invoiceToPrint.description}</div>
+                          <div className="text-[9.5px] text-slate-400 font-mono mt-0.5">@ {formatCurrency(invoiceToPrint.price)} / Pcs</div>
+                        </td>
+                        <td className="p-2.5 text-center font-bold text-slate-700 font-mono">
+                          {invoiceToPrint.qty} Pcs
+                        </td>
+                        <td className="p-2.5 text-right pr-3 font-bold font-mono text-slate-900">
+                          {formatCurrency(invoiceToPrint.total)}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Grand Total Display */}
+              <div className="bg-slate-900 text-white rounded-2xl p-3.5 mb-5 flex items-center justify-between">
+                <span className="text-xs font-bold text-amber-300 uppercase tracking-wider">TOTAL NOTA</span>
+                <span className="text-xl font-mono font-black text-amber-400">{formatCurrency(invoiceToPrint.total)}</span>
+              </div>
+
+              {/* Actions Button */}
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  onClick={() => window.print()}
+                  className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
+                >
+                  <Printer className="h-4 w-4 text-amber-300" />
+                  <span>Cetak / Simpan PDF</span>
+                </button>
+                <button
+                  onClick={() => setInvoiceToPrint(null)}
+                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-all cursor-pointer"
+                >
+                  Selesai
+                </button>
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
