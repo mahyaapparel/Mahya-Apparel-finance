@@ -2,6 +2,9 @@ import express from "express";
 import path from "path";
 import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
+import { initializeApp } from "firebase/app";
+import { initializeFirestore, doc, setDoc } from "firebase/firestore";
+import firebaseConfig from "./firebase-applet-config.json";
 
 // Load environment variables
 dotenv.config();
@@ -9,7 +12,23 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
-// Enable JSON parsing
+// Initialize Firebase for server-side persistence
+const firebaseApp = initializeApp(firebaseConfig, "server-app");
+const dbId = firebaseConfig.firestoreDatabaseId || "(default)";
+const serverDb = initializeFirestore(firebaseApp, {
+  experimentalForceLongPolling: true,
+}, dbId);
+
+// Enable CORS and JSON parsing
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+  next();
+});
 app.use(express.json());
 
 // Helper to construct redirection URI
@@ -183,32 +202,45 @@ app.get("/api/health", (req, res) => {
 });
 
 // API Webhook to receive payment transactions from Invoice App
-app.post("/api/webhooks/invoice-payment", (req, res) => {
-  const { date, division, type, amount, description, invoiceNumber, paymentType } = req.body;
-  
-  if (!amount) {
-    return res.status(400).json({ error: "Kolom amount wajib diisi." });
+app.post("/api/webhooks/invoice-payment", async (req, res) => {
+  try {
+    const { date, division, type, amount, description, invoiceNumber, paymentType } = req.body;
+    
+    if (!amount) {
+      return res.status(400).json({ error: "Kolom amount wajib diisi." });
+    }
+
+    const validDivision = ["Konveksi", "Sablon", "Aksesori", "Alat"].includes(division) 
+      ? division 
+      : "Konveksi";
+
+    const txId = `tx-inv-${Date.now()}`;
+    const newTransaction = {
+      id: txId,
+      date: date || new Date().toISOString().split('T')[0],
+      division: validDivision,
+      type: type || "Pemasukan",
+      amount: Number(amount),
+      description: description || `${paymentType || 'Pembayaran'} Invoice #${invoiceNumber || ''}`,
+    };
+
+    // Directly save to Firestore 'transactions' collection so the financial dashboard real-time listener triggers
+    await setDoc(doc(serverDb, 'transactions', txId), newTransaction);
+
+    console.log(`[Webhook Invoice] Transaksi baru berhasil disimpan ke Firestore: ${txId}`, newTransaction);
+
+    res.json({
+      success: true,
+      message: "Transaksi invoice berhasil disimpan secara real-time ke Dashboard Keuangan.",
+      transaction: newTransaction
+    });
+  } catch (err: any) {
+    console.error("Gagal menyimpan transaksi webhook ke Firestore:", err);
+    res.status(500).json({
+      error: "Gagal menyimpan transaksi ke database.",
+      details: err?.message || String(err)
+    });
   }
-
-  const validDivision = ["Konveksi", "Sablon", "Aksesori", "Alat"].includes(division) 
-    ? division 
-    : "Konveksi";
-
-  const newTransaction = {
-    id: `tx-inv-${Date.now()}`,
-    date: date || new Date().toISOString().split('T')[0],
-    division: validDivision,
-    type: type || "Pemasukan",
-    amount: Number(amount),
-    description: description || `${paymentType || 'Pembayaran'} Invoice #${invoiceNumber || ''}`,
-    createdAt: new Date().toISOString()
-  };
-
-  res.json({
-    success: true,
-    message: "Transaksi invoice berhasil diproses untuk Dashboard Keuangan.",
-    transaction: newTransaction
-  });
 });
 
 // Configure Vite middleware in development or serve built files in production
