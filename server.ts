@@ -214,6 +214,15 @@ app.post("/api/webhooks/invoice-payment", async (req, res) => {
       ? division 
       : "Konveksi";
 
+    let finalDescription = description;
+    if (!finalDescription) {
+      const tag = paymentType ? `[${paymentType}]` : '[Pembayaran]';
+      const invStr = invoiceNumber ? `Invoice #${invoiceNumber}` : 'Invoice';
+      finalDescription = `${tag} ${invStr}`;
+    } else if (invoiceNumber && !finalDescription.toLowerCase().includes(String(invoiceNumber).toLowerCase())) {
+      finalDescription = `${finalDescription} (Invoice #${invoiceNumber})`;
+    }
+
     const txId = `tx-inv-${Date.now()}`;
     const newTransaction = {
       id: txId,
@@ -221,7 +230,7 @@ app.post("/api/webhooks/invoice-payment", async (req, res) => {
       division: validDivision,
       type: type || "Pemasukan",
       amount: Number(amount),
-      description: description || `${paymentType || 'Pembayaran'} Invoice #${invoiceNumber || ''}`,
+      description: finalDescription,
     };
 
     // Directly save to Firestore 'transactions' collection so the financial dashboard real-time listener triggers
